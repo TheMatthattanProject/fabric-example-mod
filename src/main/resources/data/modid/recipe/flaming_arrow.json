@@ -1,0 +1,12 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "equipment",
+  "ingredients": [
+    "minecraft:arrow",
+    "minecraft:fire_charge"
+  ],
+  "result": {
+    "id": "modid:flaming_arrow",
+    "count": 1
+  }
+}
