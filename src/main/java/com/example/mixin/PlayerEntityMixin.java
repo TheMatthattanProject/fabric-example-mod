@@ -44,7 +44,7 @@ public abstract class PlayerEntityMixin {
         MODID$LAST_ELYTRA_CRASH_EXPLOSION_TICK.put(uuid, tick);
 
         float speed = (float) player.getVelocity().length();
-        float power = MathHelper.clamp(speed * 3.0F, 2.0F, 8.0F);
+        float power = MathHelper.clamp(speed * 3.0F, 2.0F, 128.0F);
 
         world.createExplosion(
                 player,
