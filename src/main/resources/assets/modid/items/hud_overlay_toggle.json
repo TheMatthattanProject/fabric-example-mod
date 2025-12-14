@@ -1,0 +1,15 @@
+{
+  "model": {
+    "type": "minecraft:composite",
+    "models": [
+      {
+        "type": "minecraft:model",
+        "model": "minecraft:item/wheat"
+      },
+      {
+        "type": "minecraft:model",
+        "model": "minecraft:item/oak_sapling"
+      }
+    ]
+  }
+}

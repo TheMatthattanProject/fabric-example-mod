@@ -1,3 +1,7 @@
 {
-  "item.modid.flaming_arrow": "Flaming Arrow"
+  "item.modid.flaming_arrow": "Flaming Arrow",
+  "item.modid.hud_overlay_toggle": "HUD Overlay Toggle",
+  "message.modid.hud_overlay.enabled": "HUD overlay: ON",
+  "message.modid.hud_overlay.disabled": "HUD overlay: OFF",
+  "hud.modid.overlay": "HUD Overlay Enabled"
 }
