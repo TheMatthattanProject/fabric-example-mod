@@ -1,5 +1,6 @@
 package com.example;
 
+import com.example.explosion.ExplosionCarver;
 import com.example.item.ModItems;
 import net.fabricmc.api.ModInitializer;
 
@@ -25,6 +26,7 @@ public class ExampleMod implements ModInitializer {
 		// Proceed with mild caution.
 
 		LOGGER.info("Hello Fabric world!");
+		ExplosionCarver.init();
 		ModItems.initialize();
 		LOGGER.info("INITIALISED");
 	}
