@@ -4,6 +4,7 @@ import com.example.ExampleMod;
 import com.example.mixin.TntEntityAccessor;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.entity.TntEntity;
 import net.minecraft.server.PlayerConfigEntry;
 import net.minecraft.server.MinecraftServer;
@@ -16,6 +17,12 @@ import net.minecraft.world.GameMode;
 import net.minecraft.world.Heightmap;
 import net.minecraft.world.chunk.ChunkStatus;
 
+import java.io.IOException;
+import java.nio.file.FileVisitResult;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.Map;
@@ -30,6 +37,7 @@ final class AutoProfileSuperTnt {
     private static final String STOP_SERVER_PROPERTY = "modid.autoProfileSuperTnt.stopServer";
     private static final String MAX_TICKS_PROPERTY = "modid.autoProfileSuperTnt.maxTicks";
     private static final String STOP_DELAY_TICKS_PROPERTY = "modid.autoProfileSuperTnt.stopDelayTicks";
+    private static final String DELETE_WORLD_ON_STOP_PROPERTY = "modid.autoProfileSuperTnt.deleteWorldOnStop";
 
     private static final boolean ENABLED = Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "false"));
     private static final float POWER = parseFloatProperty(POWER_PROPERTY, 128.0F);
@@ -38,6 +46,7 @@ final class AutoProfileSuperTnt {
     private static final boolean STOP_SERVER = Boolean.parseBoolean(System.getProperty(STOP_SERVER_PROPERTY, "true"));
     private static final int MAX_TICKS = parseIntProperty(MAX_TICKS_PROPERTY, 20 * 60 * 5);
     private static final int STOP_DELAY_TICKS = parseIntProperty(STOP_DELAY_TICKS_PROPERTY, 20 * 60);
+    private static final boolean DELETE_WORLD_ON_STOP = Boolean.parseBoolean(System.getProperty(DELETE_WORLD_ON_STOP_PROPERTY, "true"));
 
     private static final Map<MinecraftServer, State> STATE_BY_SERVER = new IdentityHashMap<>();
     private static boolean registered = false;
@@ -56,7 +65,9 @@ final class AutoProfileSuperTnt {
         }
 
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
-            STATE_BY_SERVER.put(server, new State());
+            State state = new State();
+            state.worldRootPath = normalizePath(server.getSavePath(WorldSavePath.ROOT));
+            STATE_BY_SERVER.put(server, state);
             ExampleMod.LOGGER.info(
                     "[AutoProfileSuperTnt] Enabled: power={} delayTicks={} fuseTicks={} stopServer={} maxTicks={} stopDelayTicks={}",
                     POWER,
@@ -66,6 +77,8 @@ final class AutoProfileSuperTnt {
                     MAX_TICKS,
                     STOP_DELAY_TICKS
             );
+
+            logWorldDirectoryTimes(state.worldRootPath);
 
             ServerWorld world = server.getOverworld();
             if (world != null) {
@@ -77,7 +90,12 @@ final class AutoProfileSuperTnt {
             }
         });
 
-        ServerLifecycleEvents.SERVER_STOPPING.register(STATE_BY_SERVER::remove);
+        ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
+            State state = STATE_BY_SERVER.remove(server);
+            if (state != null) {
+                deleteWorldIfEnabled(state);
+            }
+        });
         ServerTickEvents.END_SERVER_TICK.register(AutoProfileSuperTnt::tick);
     }
 
@@ -162,6 +180,70 @@ final class AutoProfileSuperTnt {
         }
     }
 
+    private static void deleteWorldIfEnabled(State state) {
+        if (!DELETE_WORLD_ON_STOP) {
+            return;
+        }
+
+        Path worldRootPath = state.worldRootPath;
+        if (worldRootPath == null) {
+            return;
+        }
+
+        Path gameDir = normalizePath(FabricLoader.getInstance().getGameDir());
+        if (!worldRootPath.startsWith(gameDir) || worldRootPath.equals(gameDir)) {
+            ExampleMod.LOGGER.warn("[AutoProfileSuperTnt] Refusing to delete world outside run dir: world={} runDir={}", worldRootPath, gameDir);
+            return;
+        }
+
+        try {
+            deleteDirectoryRecursively(worldRootPath);
+            ExampleMod.LOGGER.info("[AutoProfileSuperTnt] Deleted world directory: {}", worldRootPath);
+        } catch (Exception e) {
+            ExampleMod.LOGGER.warn("[AutoProfileSuperTnt] Failed to delete world directory: {}", worldRootPath, e);
+        }
+    }
+
+    private static void deleteDirectoryRecursively(Path root) throws IOException {
+        if (!Files.exists(root)) {
+            return;
+        }
+
+        Files.walkFileTree(root, new SimpleFileVisitor<>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                Files.deleteIfExists(file);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+                if (exc != null) {
+                    throw exc;
+                }
+                Files.deleteIfExists(dir);
+                return FileVisitResult.CONTINUE;
+            }
+        });
+    }
+
+    private static Path normalizePath(Path path) {
+        return path.toAbsolutePath().normalize();
+    }
+
+    private static void logWorldDirectoryTimes(Path worldRootPath) {
+        try {
+            BasicFileAttributes attrs = Files.readAttributes(worldRootPath, BasicFileAttributes.class);
+            ExampleMod.LOGGER.info(
+                    "[AutoProfileSuperTnt] World dir times: created={} modified={}",
+                    attrs.creationTime(),
+                    attrs.lastModifiedTime()
+            );
+        } catch (Exception e) {
+            ExampleMod.LOGGER.debug("[AutoProfileSuperTnt] Failed to read world dir attributes: {}", worldRootPath, e);
+        }
+    }
+
     private static boolean triggerExplosionAtSpawn(MinecraftServer server, State state) {
         ServerWorld world = server.getOverworld();
         if (world == null) {
@@ -237,5 +319,7 @@ final class AutoProfileSuperTnt {
         BlockPos tntPos;
 
         final Set<UUID> seenPlayers = new HashSet<>();
+
+        Path worldRootPath;
     }
 }
