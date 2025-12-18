@@ -155,6 +155,7 @@ tasks.register("prepareProfileSuperTnt") {
 
 		properties.put("online-mode", "false")
 		properties.put("max-tick-time", "-1")
+		properties.put("pause-when-empty-seconds", "0")
 		properties.put("level-name", levelName)
 		properties.put("level-seed", levelSeed)
 

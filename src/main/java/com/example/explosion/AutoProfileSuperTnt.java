@@ -1,20 +1,20 @@
 package com.example.explosion;
 
 import com.example.ExampleMod;
-import com.example.mixin.TntEntityAccessor;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.entity.TntEntity;
 import net.minecraft.server.PlayerConfigEntry;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.PlayerManager;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.WorldSavePath;
 import net.minecraft.world.GameMode;
 import net.minecraft.world.Heightmap;
+import net.minecraft.world.World;
 import net.minecraft.world.chunk.ChunkStatus;
 
 import java.io.IOException;
@@ -33,7 +33,6 @@ final class AutoProfileSuperTnt {
     private static final String ENABLED_PROPERTY = "modid.autoProfileSuperTnt";
     private static final String POWER_PROPERTY = "modid.autoProfileSuperTnt.power";
     private static final String START_DELAY_TICKS_PROPERTY = "modid.autoProfileSuperTnt.delayTicks";
-    private static final String FUSE_TICKS_PROPERTY = "modid.autoProfileSuperTnt.fuseTicks";
     private static final String STOP_SERVER_PROPERTY = "modid.autoProfileSuperTnt.stopServer";
     private static final String MAX_TICKS_PROPERTY = "modid.autoProfileSuperTnt.maxTicks";
     private static final String STOP_DELAY_TICKS_PROPERTY = "modid.autoProfileSuperTnt.stopDelayTicks";
@@ -42,7 +41,6 @@ final class AutoProfileSuperTnt {
     private static final boolean ENABLED = Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "false"));
     private static final float POWER = parseFloatProperty(POWER_PROPERTY, 128.0F);
     private static final int START_DELAY_TICKS = parseIntProperty(START_DELAY_TICKS_PROPERTY, 40);
-    private static final int FUSE_TICKS = parseIntProperty(FUSE_TICKS_PROPERTY, 1);
     private static final boolean STOP_SERVER = Boolean.parseBoolean(System.getProperty(STOP_SERVER_PROPERTY, "true"));
     private static final int MAX_TICKS = parseIntProperty(MAX_TICKS_PROPERTY, 20 * 60 * 5);
     private static final int STOP_DELAY_TICKS = parseIntProperty(STOP_DELAY_TICKS_PROPERTY, 20 * 60);
@@ -69,10 +67,9 @@ final class AutoProfileSuperTnt {
             state.worldRootPath = normalizePath(server.getSavePath(WorldSavePath.ROOT));
             STATE_BY_SERVER.put(server, state);
             ExampleMod.LOGGER.info(
-                    "[AutoProfileSuperTnt] Enabled: power={} delayTicks={} fuseTicks={} stopServer={} maxTicks={} stopDelayTicks={}",
+                    "[AutoProfileSuperTnt] Enabled: power={} delayTicks={} stopServer={} maxTicks={} stopDelayTicks={}",
                     POWER,
                     START_DELAY_TICKS,
-                    FUSE_TICKS,
                     STOP_SERVER,
                     MAX_TICKS,
                     STOP_DELAY_TICKS
@@ -112,9 +109,9 @@ final class AutoProfileSuperTnt {
         if (!state.explosionTriggered && state.ticks >= START_DELAY_TICKS) {
             if (triggerExplosionAtSpawn(server, state)) {
                 state.explosionTriggered = true;
-                ExampleMod.LOGGER.info("[AutoProfileSuperTnt] Super TNT spawned at {}", formatPos(state.tntPos));
+                ExampleMod.LOGGER.info("[AutoProfileSuperTnt] Super TNT explosion triggered at {}", formatPos(state.tntPos));
             } else if (state.ticks >= START_DELAY_TICKS + 200) {
-                ExampleMod.LOGGER.warn("[AutoProfileSuperTnt] Failed to spawn Super TNT at spawn; stopping server");
+                ExampleMod.LOGGER.warn("[AutoProfileSuperTnt] Failed to trigger Super TNT explosion at spawn; stopping server");
                 server.stop(false);
             }
         }
@@ -260,19 +257,43 @@ final class AutoProfileSuperTnt {
             return false;
         }
 
-        TntEntity tntEntity = new TntEntity(
-                world,
+        int maxPropagationBlocks = MathHelper.ceil(POWER * 0.78F) + 4;
+        int chunkRadius = MathHelper.ceil(maxPropagationBlocks / 16.0F);
+        forceLoadChunksAround(world, tntPos, chunkRadius);
+        preloadChunksAround(world, tntPos, chunkRadius);
+
+        world.createExplosion(
+                null,
                 tntPos.getX() + 0.5D,
                 tntPos.getY(),
                 tntPos.getZ() + 0.5D,
-                null
+                POWER,
+                false,
+                World.ExplosionSourceType.TNT
         );
-        ((TntEntityAccessor) tntEntity).modid$setExplosionPower(POWER);
-        tntEntity.setFuse(FUSE_TICKS);
-        world.spawnEntity(tntEntity);
 
         state.tntPos = tntPos;
         return true;
+    }
+
+    private static void forceLoadChunksAround(ServerWorld world, BlockPos center, int chunkRadius) {
+        int chunkX = center.getX() >> 4;
+        int chunkZ = center.getZ() >> 4;
+        for (int dx = -chunkRadius; dx <= chunkRadius; dx++) {
+            for (int dz = -chunkRadius; dz <= chunkRadius; dz++) {
+                world.setChunkForced(chunkX + dx, chunkZ + dz, true);
+            }
+        }
+    }
+
+    private static void preloadChunksAround(ServerWorld world, BlockPos center, int chunkRadius) {
+        int chunkX = center.getX() >> 4;
+        int chunkZ = center.getZ() >> 4;
+        for (int dx = -chunkRadius; dx <= chunkRadius; dx++) {
+            for (int dz = -chunkRadius; dz <= chunkRadius; dz++) {
+                world.getChunk(chunkX + dx, chunkZ + dz, ChunkStatus.FULL, true);
+            }
+        }
     }
 
     private static String formatPos(BlockPos pos) {
