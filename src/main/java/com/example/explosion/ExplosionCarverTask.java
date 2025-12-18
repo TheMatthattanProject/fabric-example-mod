@@ -3,14 +3,22 @@ package com.example.explosion;
 import com.example.mixin.ExplosionImplAccessor;
 import it.unimi.dsi.fastutil.ints.Int2FloatOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2FloatOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
+import net.minecraft.block.Blocks;
 import net.minecraft.item.ItemStack;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.chunk.Chunk;
+import net.minecraft.world.chunk.ChunkStatus;
+import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.world.explosion.ExplosionBehavior;
 import net.minecraft.world.explosion.ExplosionImpl;
 
@@ -255,63 +263,193 @@ public final class ExplosionCarverTask {
     }
 
     private BreakResult breakQueuedBlocks(int maxBlockBreaks, int maxDropBlocks) {
-        int blocksBroken = 0;
-        int dropBlocks = 0;
-        int dropsRemaining = maxDropBlocks;
-        long lastChunkLong = Long.MIN_VALUE;
-        boolean lastChunkLoaded = false;
-
-        while (blocksBroken < maxBlockBreaks && !blocksToBreak.isEmpty()) {
+        // Phase 1: drain positions into chunk-section buckets to reduce repeated chunk lookups and to batch client updates.
+        Long2ObjectLinkedOpenHashMap<LongArrayList> positionsByRegion = new Long2ObjectLinkedOpenHashMap<>();
+        int drained = 0;
+        while (drained < maxBlockBreaks && !blocksToBreak.isEmpty()) {
             long posLong = blocksToBreak.dequeueLong();
+            drained++;
 
             int x = BlockPos.unpackLongX(posLong);
             int y = BlockPos.unpackLongY(posLong);
             int z = BlockPos.unpackLongZ(posLong);
-            int dx = x - originX;
-            int dy = y - originY;
-            int dz = z - originZ;
+            int chunkX = x >> 4;
+            int chunkZ = z >> 4;
+            int sectionY = y >> 4;
 
-            long chunkLong = packChunkLong(x >> 4, z >> 4);
+            long regionKey = packChunkSectionLong(chunkX, sectionY, chunkZ);
+            LongArrayList list = positionsByRegion.get(regionKey);
+            if (list == null) {
+                list = new LongArrayList();
+                positionsByRegion.put(regionKey, list);
+            }
+            list.add(posLong);
+        }
+
+        if (positionsByRegion.isEmpty()) {
+            return new BreakResult(0, 0);
+        }
+
+        int blocksBroken = 0;
+        int dropBlocks = 0;
+        int dropsRemaining = maxDropBlocks;
+
+        final BlockState airState = Blocks.AIR.getDefaultState();
+
+        // Bulk carve flags:
+        // - SKIP_DROPS: no drops during the fast path (drops are budgeted + handled via onExploded below).
+        // - NO_REDRAW: suppress per-block redraw; we record changes via ServerChunkManager.markForUpdate() so the
+        //   chunk holder can batch them into a single delta update packet per section.
+        // - (No NOTIFY_LISTENERS): avoid calling World#updateListeners during the bulk pass.
+        // - (No NOTIFY_NEIGHBORS): avoid neighbor updates in the bulk pass for performance.
+        final int carveFlags = Block.SKIP_DROPS | Block.NO_REDRAW;
+
+        // Optional correctness edge pass: allow a small number of boundary blocks to notify neighbors so fluids/gravity update.
+        // This is capped to prevent spikes and only affects blocks on the edge of the carved set for this tick.
+        int neighborNotifiesRemaining = Math.min(256, drained);
+        final int carveBoundaryFlags = carveFlags | Block.NOTIFY_NEIGHBORS;
+
+        long lastChunkLong = Long.MIN_VALUE;
+        WorldChunk chunk = null;
+        boolean lastChunkLoaded = false;
+
+        for (Long2ObjectMap.Entry<LongArrayList> entry : positionsByRegion.long2ObjectEntrySet()) {
+            long regionKey = entry.getLongKey();
+            int chunkX = unpackRegionChunkX(regionKey);
+            int chunkZ = unpackRegionChunkZ(regionKey);
+
+            long chunkLong = packChunkLong(chunkX, chunkZ);
             if (chunkLong != lastChunkLong) {
                 lastChunkLong = chunkLong;
                 lastChunkLoaded = world.isChunkLoaded(chunkLong);
+                if (lastChunkLoaded) {
+                    Chunk maybeChunk = world.getChunkManager().getChunk(chunkX, chunkZ, ChunkStatus.FULL, false);
+                    chunk = maybeChunk instanceof WorldChunk worldChunk ? worldChunk : null;
+                    lastChunkLoaded = chunk != null;
+                } else {
+                    chunk = null;
+                }
             }
-            if (!lastChunkLoaded) {
+            if (!lastChunkLoaded || chunk == null) {
                 continue;
             }
 
-            scratchPos.set(x, y, z);
-            if (!world.isInBuildLimit(scratchPos)) {
+            LongArrayList positions = entry.getValue();
+            if (positions.isEmpty()) {
                 continue;
             }
 
-            BlockState state = world.getBlockState(scratchPos);
-            if (state.isAir()) {
-                continue;
+            // Phase 2: pre-filter and split into fast-carve vs drop blocks, and collect a carved set for boundary detection.
+            LongArrayList carvePositions = new LongArrayList();
+            LongArrayList dropPositions = new LongArrayList();
+            LongOpenHashSet carvedSet = new LongOpenHashSet(Math.max(16, positions.size() * 2));
+
+            for (int i = 0; i < positions.size(); i++) {
+                long posLong = positions.getLong(i);
+                int x = BlockPos.unpackLongX(posLong);
+                int y = BlockPos.unpackLongY(posLong);
+                int z = BlockPos.unpackLongZ(posLong);
+                int dx = x - originX;
+                int dy = y - originY;
+                int dz = z - originZ;
+
+                scratchPos.set(x, y, z);
+                if (!world.isInBuildLimit(scratchPos)) {
+                    continue;
+                }
+
+                BlockState state = chunk.getBlockState(scratchPos);
+                if (state.isAir()) {
+                    continue;
+                }
+
+                float hardness = state.getHardness(world, scratchPos);
+                if (hardness < 0.0F) {
+                    continue;
+                }
+
+                float energy = getBestEnergyFloat(posLong, dx, dy, dz);
+                if (energy <= MIN_BREAK_ENERGY) {
+                    continue;
+                }
+
+                if (!behavior.canDestroyBlock(explosion, world, scratchPos, state, energy)) {
+                    continue;
+                }
+
+                boolean allowDrops = dropsRemaining > 0 && dx * dx + dy * dy + dz * dz <= dropInnerRadiusSquared;
+                if (allowDrops) {
+                    dropsRemaining--;
+                    dropPositions.add(posLong);
+                } else {
+                    carvePositions.add(posLong);
+                }
+                carvedSet.add(posLong);
             }
 
-            float hardness = state.getHardness(world, scratchPos);
-            if (hardness < 0.0F) {
-                continue;
+            // Phase 3a: fast carve (no onExploded) for the bulk of blocks.
+            for (int i = 0; i < carvePositions.size(); i++) {
+                long posLong = carvePositions.getLong(i);
+                int x = BlockPos.unpackLongX(posLong);
+                int y = BlockPos.unpackLongY(posLong);
+                int z = BlockPos.unpackLongZ(posLong);
+
+                scratchPos.set(x, y, z);
+                int flags = carveFlags;
+                if (neighborNotifiesRemaining > 0 && isBoundaryOfCarvedSet(posLong, carvedSet)) {
+                    flags = carveBoundaryFlags;
+                    neighborNotifiesRemaining--;
+                }
+
+                BlockState previous = chunk.setBlockState(scratchPos, airState, flags);
+                if (previous != null) {
+                    blocksBroken++;
+                    // ServerChunkManager.markForUpdate(BlockPos) is per-block, not per-section; it records the changed
+                    // positions so the chunk holder can broadcast a MultiBlockChange / full section update later.
+                    world.getChunkManager().markForUpdate(scratchPos);
+                }
             }
 
-            float energy = getBestEnergyFloat(posLong, dx, dy, dz);
-            if (energy <= MIN_BREAK_ENERGY) {
-                continue;
-            }
+            // Phase 3b: limited drops path (expensive), kept close to the origin and still tick-budgeted.
+            for (int i = 0; i < dropPositions.size(); i++) {
+                long posLong = dropPositions.getLong(i);
+                int x = BlockPos.unpackLongX(posLong);
+                int y = BlockPos.unpackLongY(posLong);
+                int z = BlockPos.unpackLongZ(posLong);
+                int dx = x - originX;
+                int dy = y - originY;
+                int dz = z - originZ;
 
-            if (!behavior.canDestroyBlock(explosion, world, scratchPos, state, energy)) {
-                continue;
-            }
+                scratchPos.set(x, y, z);
+                if (!world.isInBuildLimit(scratchPos)) {
+                    continue;
+                }
 
-            boolean allowDrops = dropsRemaining > 0 && dx * dx + dy * dy + dz * dz <= dropInnerRadiusSquared;
-            // Default to NO DROPS for performance; only allow a small inner core, still tick-budgeted.
-            state.onExploded(world, scratchPos, explosion, allowDrops ? dropConsumer : NO_DROPS_CONSUMER);
-            if (allowDrops) {
-                dropsRemaining--;
+                BlockState state = chunk.getBlockState(scratchPos);
+                if (state.isAir()) {
+                    continue;
+                }
+
+                float hardness = state.getHardness(world, scratchPos);
+                if (hardness < 0.0F) {
+                    continue;
+                }
+
+                float energy = getBestEnergyFloat(posLong, dx, dy, dz);
+                if (energy <= MIN_BREAK_ENERGY) {
+                    continue;
+                }
+
+                if (!behavior.canDestroyBlock(explosion, world, scratchPos, state, energy)) {
+                    continue;
+                }
+
+                state.onExploded(world, scratchPos, explosion, dropConsumer);
+                blocksBroken++;
                 dropBlocks++;
+                // onExploded() uses the vanilla path and will already notify clients; this is just a cheap safety net.
+                world.getChunkManager().markForUpdate(scratchPos);
             }
-            blocksBroken++;
         }
 
         return new BreakResult(blocksBroken, dropBlocks);
@@ -401,5 +539,52 @@ public final class ExplosionCarverTask {
 
     private static long packChunkLong(int chunkX, int chunkZ) {
         return ((long) chunkX & 0xFFFFFFFFL) | (((long) chunkZ & 0xFFFFFFFFL) << 32);
+    }
+
+    // Chunk-section region packing (22b chunkX, 22b chunkZ, 20b sectionY) to batch work per chunk section.
+    private static final int REGION_CHUNK_BITS = 22;
+    private static final int REGION_SECTION_BITS = 20;
+    private static final long REGION_CHUNK_MASK = (1L << REGION_CHUNK_BITS) - 1L;
+    private static final long REGION_SECTION_MASK = (1L << REGION_SECTION_BITS) - 1L;
+
+    private static long packChunkSectionLong(int chunkX, int sectionY, int chunkZ) {
+        long x = packSigned(chunkX, REGION_CHUNK_BITS);
+        long z = packSigned(chunkZ, REGION_CHUNK_BITS);
+        long s = packSigned(sectionY, REGION_SECTION_BITS);
+        return (s << (REGION_CHUNK_BITS * 2)) | (z << REGION_CHUNK_BITS) | x;
+    }
+
+    private static int unpackRegionChunkX(long regionKey) {
+        return unpackSigned(regionKey & REGION_CHUNK_MASK, REGION_CHUNK_BITS);
+    }
+
+    private static int unpackRegionChunkZ(long regionKey) {
+        return unpackSigned((regionKey >>> REGION_CHUNK_BITS) & REGION_CHUNK_MASK, REGION_CHUNK_BITS);
+    }
+
+    @SuppressWarnings("unused")
+    private static int unpackRegionSectionY(long regionKey) {
+        return unpackSigned((regionKey >>> (REGION_CHUNK_BITS * 2)) & REGION_SECTION_MASK, REGION_SECTION_BITS);
+    }
+
+    private static long packSigned(int value, int bits) {
+        return ((long) value) & ((1L << bits) - 1L);
+    }
+
+    private static int unpackSigned(long value, int bits) {
+        int shift = 64 - bits;
+        return (int) ((value << shift) >> shift);
+    }
+
+    private static boolean isBoundaryOfCarvedSet(long posLong, LongOpenHashSet carvedSet) {
+        int x = BlockPos.unpackLongX(posLong);
+        int y = BlockPos.unpackLongY(posLong);
+        int z = BlockPos.unpackLongZ(posLong);
+        return !carvedSet.contains(BlockPos.asLong(x + 1, y, z))
+                || !carvedSet.contains(BlockPos.asLong(x - 1, y, z))
+                || !carvedSet.contains(BlockPos.asLong(x, y + 1, z))
+                || !carvedSet.contains(BlockPos.asLong(x, y - 1, z))
+                || !carvedSet.contains(BlockPos.asLong(x, y, z + 1))
+                || !carvedSet.contains(BlockPos.asLong(x, y, z - 1));
     }
 }
