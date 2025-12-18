@@ -36,7 +36,12 @@ public final class ExplosionCarver {
         registered = true;
 
         ServerTickEvents.END_SERVER_TICK.register(ExplosionCarver::tick);
-        ServerLifecycleEvents.SERVER_STOPPING.register(TASKS_BY_SERVER::remove);
+        ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+            TASKS_BY_SERVER.remove(server);
+            ExplosionCarverProfiling.onServerStopping();
+        });
+
+        AutoProfileSuperTnt.init();
     }
 
     public static void schedule(ServerWorld world, ExplosionImpl explosion, long seed) {
@@ -45,9 +50,12 @@ public final class ExplosionCarver {
             return;
         }
 
+        ExplosionCarverTask task = new ExplosionCarverTask(explosion, seed);
+        ExplosionCarverProfiling.onTaskScheduled(world, explosion, seed, task);
+
         TASKS_BY_SERVER
                 .computeIfAbsent(server, ignored -> new ArrayDeque<>())
-                .addLast(new ExplosionCarverTask(explosion, seed));
+                .addLast(task);
     }
 
     private static void tick(MinecraftServer server) {
@@ -71,16 +79,21 @@ public final class ExplosionCarver {
                 break;
             }
 
+            long startNanos = System.nanoTime();
             ExplosionCarverTask.Progress progress = task.tick(
                     Math.min(remainingNodeExpansions, MAX_NODE_EXPANSIONS_PER_TASK_PER_TICK),
                     Math.min(remainingBlockBreaks, MAX_BLOCK_BREAKS_PER_TASK_PER_TICK),
                     Math.min(remainingDropBlocks, MAX_DROP_BLOCKS_PER_TASK_PER_TICK)
             );
+            long elapsedNanos = System.nanoTime() - startNanos;
+            ExplosionCarverProfiling.onTaskTick(task, progress, elapsedNanos);
             remainingNodeExpansions -= progress.nodesExpanded();
             remainingBlockBreaks -= progress.blocksBroken();
             remainingDropBlocks -= progress.dropBlocks();
 
-            if (!progress.done()) {
+            if (progress.done()) {
+                ExplosionCarverProfiling.onTaskFinished(task);
+            } else {
                 tasks.addLast(task);
             }
         }
@@ -88,5 +101,10 @@ public final class ExplosionCarver {
         if (tasks.isEmpty()) {
             TASKS_BY_SERVER.remove(server);
         }
+    }
+
+    static boolean hasPendingTasks(MinecraftServer server) {
+        Deque<ExplosionCarverTask> tasks = TASKS_BY_SERVER.get(server);
+        return tasks != null && !tasks.isEmpty();
     }
 }

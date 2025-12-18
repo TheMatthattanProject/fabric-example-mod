@@ -97,6 +97,10 @@ public final class ExplosionCarverTask {
     public record Progress(int nodesExpanded, int blocksBroken, int dropBlocks, boolean done) {
     }
 
+    int getBoundingRadius() {
+        return boundingRadius;
+    }
+
     public ExplosionCarverTask(ExplosionImpl explosion, long seed) {
         this.explosion = explosion;
         this.seed = seed;

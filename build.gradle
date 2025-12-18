@@ -28,6 +28,20 @@ loom {
 		}
 	}
 
+	runs {
+		profileSuperTnt {
+			server()
+			runDir "run-profile-super-tnt"
+			vmArgs(
+					"-Dmodid.explosionProfiling=true",
+					"-Dmodid.explosionProfiling.minPower=128",
+					"-Dmodid.explosionProfiling.jfr=true",
+					"-Dmodid.autoProfileSuperTnt=true",
+					"-Dmodid.autoProfileSuperTnt.maxTicks=6000"
+			)
+			programArgs "nogui"
+		}
+	}
 }
 
 dependencies {
@@ -87,4 +101,73 @@ publishing {
 		// The repositories here will be used for publishing your artifact, not for
 		// retrieving dependencies.
 	}
+}
+
+tasks.register("prepareProfileSuperTnt") {
+	group = "fabric"
+	description = "Writes EULA/server.properties for the automated Super TNT profiling run."
+	outputs.upToDateWhen { false }
+
+	doLast {
+		def runDir = file("run-profile-super-tnt")
+		runDir.mkdirs()
+
+		def levelName = "profile-world"
+		def levelSeed = "1046879701078950751"
+
+		def worldDirCandidates = [
+				new File(runDir, levelName),
+				new File(runDir, "saves/${levelName}")
+		]
+
+		worldDirCandidates.each { dir ->
+			if (!dir.exists()) {
+				return
+			}
+
+			logger.lifecycle("Deleting existing world at ${dir}")
+			delete(dir)
+			if (dir.exists()) {
+				throw new GradleException("Failed to delete existing world at ${dir}. Is a server still running?")
+			}
+		}
+
+		def eulaFile = new File(runDir, "eula.txt")
+		eulaFile.text = "eula=true\n"
+
+		def propertiesFile = new File(runDir, "server.properties")
+		def properties = new LinkedHashMap<String, String>()
+		if (propertiesFile.exists()) {
+			propertiesFile.eachLine { line ->
+				def trimmed = line?.trim()
+				if (!trimmed || trimmed.startsWith("#")) {
+					return
+				}
+				int idx = trimmed.indexOf("=")
+				if (idx <= 0) {
+					return
+				}
+				def key = trimmed.substring(0, idx)
+				def value = trimmed.substring(idx + 1)
+				properties.put(key, value)
+			}
+		}
+
+		properties.put("online-mode", "false")
+		properties.put("max-tick-time", "-1")
+		properties.put("level-name", levelName)
+		properties.put("level-seed", levelSeed)
+
+		propertiesFile.text = properties.collect { k, v -> "${k}=${v}" }.join("\n") + "\n"
+	}
+}
+
+tasks.named("runProfileSuperTnt").configure {
+	dependsOn "prepareProfileSuperTnt"
+}
+
+tasks.register("profileSuperTnt") {
+	group = "fabric"
+	description = "Runs a dedicated server, detonates Super TNT at spawn, logs metrics, writes a .jfr, then exits."
+	dependsOn "runProfileSuperTnt"
 }
