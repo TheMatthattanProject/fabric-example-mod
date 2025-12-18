@@ -14,8 +14,8 @@ import java.util.Map;
 public final class ExplosionCarver {
     public static final float HIGH_POWER_THRESHOLD = 48.0F;
 
-    private static final int MAX_TOTAL_NODE_EXPANSIONS_PER_TICK = 400_000;
-    private static final int MAX_TOTAL_BLOCK_BREAKS_PER_TICK = 200_000;
+    private static final int MAX_TOTAL_NODE_EXPANSIONS_PER_TICK = 40_000;
+    private static final int MAX_TOTAL_BLOCK_BREAKS_PER_TICK = 20_000;
     // Drops are the biggest spike: limit how many *blocks* per tick are allowed to generate item drops.
     private static final int MAX_TOTAL_DROP_BLOCKS_PER_TICK = 64;
 
