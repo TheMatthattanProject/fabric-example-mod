@@ -1,4 +1,5 @@
 {
+  "block.modid.super_tnt": "Super TNT",
   "item.modid.flaming_arrow": "Flaming Arrow",
   "item.modid.hud_overlay_toggle": "HUD Overlay Toggle",
   "message.modid.hud_overlay.enabled": "HUD overlay: ON",
