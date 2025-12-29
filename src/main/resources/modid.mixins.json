@@ -6,6 +6,7 @@
 		"ExplosionImplAccessor",
 		"ExplosionImplMixin",
 		"FireworkRocketEntityMixin",
+		"GhastEntityShootFireballGoalMixin",
 		"PlayerEntityMixin",
 		"ServerPlayNetworkHandlerMixin",
 		"TntEntityAccessor"
