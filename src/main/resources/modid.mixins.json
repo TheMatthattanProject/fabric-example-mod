@@ -5,8 +5,11 @@
 	"mixins": [
 		"ExplosionImplAccessor",
 		"ExplosionImplMixin",
+		"ArrowEntityDuplicateTargetMixin",
+		"EnderDragonPartDuplicateOwnerMixin",
 		"FireworkRocketEntityMixin",
 		"GhastEntityShootFireballGoalMixin",
+		"LivingEntityDamageDuplicateAttackerMixin",
 		"PlayerEntityMixin",
 		"ServerPlayNetworkHandlerMixin",
 		"TntEntityAccessor"

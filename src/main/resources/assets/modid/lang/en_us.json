@@ -1,7 +1,12 @@
 {
   "block.modid.super_tnt": "Super TNT",
+  "effect.modid.copy_on_hit": "Duplication",
   "item.modid.flaming_arrow": "Flaming Arrow",
   "item.modid.hud_overlay_toggle": "HUD Overlay Toggle",
+  "item.minecraft.lingering_potion.effect.copy_on_hit": "Lingering Potion of Duplication",
+  "item.minecraft.potion.effect.copy_on_hit": "Potion of Duplication",
+  "item.minecraft.splash_potion.effect.copy_on_hit": "Splash Potion of Duplication",
+  "item.minecraft.tipped_arrow.effect.copy_on_hit": "Arrow of Duplication",
   "message.modid.hud_overlay.enabled": "HUD overlay: ON",
   "message.modid.hud_overlay.disabled": "HUD overlay: OFF",
   "hud.modid.overlay": "HUD Overlay Enabled"

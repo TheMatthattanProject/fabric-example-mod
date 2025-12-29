@@ -2,10 +2,11 @@ package com.example;
 
 import com.example.explosion.ExplosionCarver;
 import com.example.block.ModBlocks;
+import com.example.effect.ModStatusEffects;
 import com.example.item.ModItems;
+import com.example.potion.ModPotions;
 import net.fabricmc.api.ModInitializer;
 
-import net.minecraft.item.Item;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,6 +28,8 @@ public class ExampleMod implements ModInitializer {
 		// Proceed with mild caution.
 
 		LOGGER.info("Hello Fabric world!");
+		ModStatusEffects.initialize();
+		ModPotions.initialize();
 		ExplosionCarver.init();
 		ModBlocks.initialize();
 		ModItems.initialize();
