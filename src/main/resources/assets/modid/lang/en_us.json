@@ -7,6 +7,7 @@
   "item.minecraft.potion.effect.copy_on_hit": "Potion of Duplication",
   "item.minecraft.splash_potion.effect.copy_on_hit": "Splash Potion of Duplication",
   "item.minecraft.tipped_arrow.effect.copy_on_hit": "Arrow of Duplication",
+  "enchantment.modid.barrage": "Barrage",
   "message.modid.hud_overlay.enabled": "HUD overlay: ON",
   "message.modid.hud_overlay.disabled": "HUD overlay: OFF",
   "hud.modid.overlay": "HUD Overlay Enabled"

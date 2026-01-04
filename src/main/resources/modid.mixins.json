@@ -11,6 +11,7 @@
 		"GhastEntityShootFireballGoalMixin",
 		"LivingEntityDamageDuplicateAttackerMixin",
 		"PlayerEntityMixin",
+		"RangedWeaponItemBarrageMixin",
 		"ServerPlayNetworkHandlerMixin",
 		"TntEntityAccessor"
 	],
