@@ -1,6 +1,10 @@
 package com.example;
 
 import com.example.explosion.ExplosionCarver;
+import com.example.hammer.HammerCommands;
+import com.example.hammer.HammerEntities;
+import com.example.hammer.HammerNetworking;
+import com.example.hammer.HammerSounds;
 import com.example.block.ModBlocks;
 import com.example.effect.ModStatusEffects;
 import com.example.item.ModItems;
@@ -32,6 +36,10 @@ public class ExampleMod implements ModInitializer {
 		ModPotions.initialize();
 		ExplosionCarver.init();
 		ModBlocks.initialize();
+		HammerEntities.initialize();
+		HammerNetworking.initialize();
+		HammerSounds.initialize();
+		HammerCommands.initialize();
 		ModItems.initialize();
 		LOGGER.info("INITIALISED");
 	}

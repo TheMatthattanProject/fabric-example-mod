@@ -5,6 +5,7 @@ import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.text.Text;
 import com.example.hud.HudOverlayState;
+import com.example.hammer.client.HammerClient;
 
 public class ExampleModClient implements ClientModInitializer {
 	@Override
@@ -32,5 +33,7 @@ public class ExampleModClient implements ClientModInitializer {
 					0xFFFFFFFF
 			);
 		});
+
+		HammerClient.initializeClient();
 	}
 }

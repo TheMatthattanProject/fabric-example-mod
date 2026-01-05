@@ -1,6 +1,7 @@
 package com.example.item;
 
 import com.example.ExampleMod;
+import com.example.hammer.HammerDesignatorItem;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemGroups;
@@ -19,6 +20,9 @@ public class ModItems {
     private static final Identifier HUD_OVERLAY_TOGGLE_ID = Identifier.of(ExampleMod.MOD_ID, "hud_overlay_toggle");
     private static final RegistryKey<Item> HUD_OVERLAY_TOGGLE_KEY = RegistryKey.of(RegistryKeys.ITEM, HUD_OVERLAY_TOGGLE_ID);
 
+    private static final Identifier HAMMER_DESIGNATOR_ID = Identifier.of(ExampleMod.MOD_ID, "hammer_designator");
+    private static final RegistryKey<Item> HAMMER_DESIGNATOR_KEY = RegistryKey.of(RegistryKeys.ITEM, HAMMER_DESIGNATOR_ID);
+
     public static final Item FLAMING_ARROW = register(
             new FlamingArrowItem(new Item.Settings().registryKey(FLAMING_ARROW_KEY)),
             FLAMING_ARROW_ID
@@ -29,6 +33,11 @@ public class ModItems {
             HUD_OVERLAY_TOGGLE_ID
     );
 
+    public static final Item HAMMER_DESIGNATOR = register(
+            new HammerDesignatorItem(new Item.Settings().registryKey(HAMMER_DESIGNATOR_KEY).maxCount(1)),
+            HAMMER_DESIGNATOR_ID
+    );
+
     public static void initialize() {
         // Add our flaming arrow to the Combat ItemGroup (or whichever makes sense)
         ItemGroupEvents.modifyEntriesEvent(ItemGroups.COMBAT)
@@ -36,6 +45,9 @@ public class ModItems {
 
         ItemGroupEvents.modifyEntriesEvent(ItemGroups.TOOLS)
                 .register(entries -> entries.add(HUD_OVERLAY_TOGGLE));
+
+        ItemGroupEvents.modifyEntriesEvent(ItemGroups.TOOLS)
+                .register(entries -> entries.add(HAMMER_DESIGNATOR));
     }
 
     public static Item register(Item item, Identifier id) {

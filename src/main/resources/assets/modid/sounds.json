@@ -1,0 +1,66 @@
+{
+  "hammer_target_acquire": {
+    "sounds": [
+      {
+        "name": "minecraft:block/beacon/activate",
+        "volume": 0.9,
+        "pitch": 1.2
+      }
+    ]
+  },
+  "hammer_alignment_hum": {
+    "sounds": [
+      {
+        "name": "minecraft:block/beacon/ambient",
+        "volume": 0.7,
+        "pitch": 0.7
+      }
+    ]
+  },
+  "hammer_warning": {
+    "sounds": [
+      {
+        "name": "minecraft:block/beacon/power_select",
+        "volume": 1.0,
+        "pitch": 0.9
+      }
+    ]
+  },
+  "hammer_fire_start": {
+    "sounds": [
+      {
+        "name": "minecraft:block/beacon/power_select",
+        "volume": 1.2,
+        "pitch": 0.6
+      }
+    ]
+  },
+  "hammer_fire_loop": {
+    "sounds": [
+      {
+        "name": "minecraft:block/beacon/ambient",
+        "volume": 0.9,
+        "pitch": 0.5
+      }
+    ]
+  },
+  "hammer_cutoff": {
+    "sounds": [
+      {
+        "name": "minecraft:block/beacon/deactivate",
+        "volume": 1.2,
+        "pitch": 0.9
+      }
+    ]
+  },
+  "hammer_distant_thunder": {
+    "sounds": [
+      {
+        "name": "minecraft:entity/lightning_bolt/thunder",
+        "volume": 0.65,
+        "pitch": 0.8
+      }
+    ]
+  }
+}
+
