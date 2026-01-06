@@ -3,9 +3,13 @@ package com.example.explosion;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.minecraft.block.BlockState;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.explosion.ExplosionImpl;
+
+import java.util.function.BiPredicate;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -51,6 +55,37 @@ public final class ExplosionCarver {
         }
 
         ExplosionCarverTask task = new ExplosionCarverTask(explosion, seed);
+        ExplosionCarverProfiling.onTaskScheduled(world, explosion, seed, task);
+
+        TASKS_BY_SERVER
+                .computeIfAbsent(server, ignored -> new ArrayDeque<>())
+                .addLast(task);
+    }
+
+    public static void schedule(
+            ServerWorld world,
+            ExplosionImpl explosion,
+            long seed,
+            BiPredicate<BlockPos, BlockState> canAffectBlock,
+            boolean dropsEnabled
+    ) {
+        schedule(world, explosion, seed, canAffectBlock, dropsEnabled, 1.0F);
+    }
+
+    public static void schedule(
+            ServerWorld world,
+            ExplosionImpl explosion,
+            long seed,
+            BiPredicate<BlockPos, BlockState> canAffectBlock,
+            boolean dropsEnabled,
+            float initialEnergyMultiplier
+    ) {
+        MinecraftServer server = world.getServer();
+        if (server == null) {
+            return;
+        }
+
+        ExplosionCarverTask task = new ExplosionCarverTask(explosion, seed, canAffectBlock, dropsEnabled, initialEnergyMultiplier);
         ExplosionCarverProfiling.onTaskScheduled(world, explosion, seed, task);
 
         TASKS_BY_SERVER

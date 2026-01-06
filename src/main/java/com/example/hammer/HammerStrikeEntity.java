@@ -1,5 +1,6 @@
 package com.example.hammer;
 
+import com.example.explosion.ExplosionCarver;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
@@ -23,16 +24,20 @@ import net.minecraft.storage.WriteView;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
+import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.Heightmap;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldEvents;
+import net.minecraft.world.explosion.Explosion;
+import net.minecraft.world.explosion.ExplosionImpl;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
+import java.util.function.BiPredicate;
 
 /**
  * Server-authoritative tick-based state machine for THE HAMMER.
@@ -63,11 +68,18 @@ public class HammerStrikeEntity extends Entity {
     private static final int STAGE_6_AFTERMATH_START = 131;
     private static final int STAGE_6_AFTERMATH_END = 220;
 
-    private static final int ERUPTION_RADIUS = 15;
+    private static final int ERUPTION_RADIUS = 38;
     private static final int ERUPTION_LAYERS = 6;
     private static final int ERUPTION_BLOCKS_PER_TICK = 240;
+    private static final int IMPACT_DEPTH_BLOCKS = 128;
+    private static final int TOP_CLEAR_HEIGHT_BLOCKS = ERUPTION_RADIUS;
+    private static final int WAVE_CLEAR_HEIGHT_BLOCKS = 128;
 
-    private static final int WAVE_RADIUS = 80;
+    private static final int WAVE_RADIUS = 192;
+    private static final int WAVE_SWEEP_INTERVAL_TICKS = 2;
+    private static final int WAVE_COLUMNS_PER_TICK = 600;
+    private static final int WAVE_BAND_THICKNESS_BLOCKS = 6;
+    private static final int WAVE_SCAN_DEPTH_BLOCKS = 64;
     private static final int PLAYER_EFFECT_RADIUS = 100;
 
     private final Deque<BlockPos> eruptionQueue = new ArrayDeque<>();
@@ -75,6 +87,18 @@ public class HammerStrikeEntity extends Entity {
     private float lastWaveRadius;
 
     private int strikeTicks;
+    private boolean craterCarveScheduled;
+
+    private int waveTargetRadius;
+    private int waveFoliageClearedRadius;
+    private boolean waveSweepActive;
+    private int waveSweepRStart;
+    private int waveSweepREnd;
+    private int waveSweepDx;
+    private int waveSweepDz;
+    private int waveSweepDzMin;
+    private int waveSweepDzMax;
+    private boolean waveSweepNegPending;
 
     public HammerStrikeEntity(EntityType<? extends HammerStrikeEntity> type, World world) {
         super(type, world);
@@ -147,6 +171,10 @@ public class HammerStrikeEntity extends Entity {
 
         strikeTicks = view.getInt("StrikeTicks", 0);
         lastWaveRadius = view.getFloat("LastWaveRadius", 0.0F);
+        craterCarveScheduled = view.getBoolean("CraterCarveScheduled", false);
+        waveTargetRadius = view.getInt("WaveTargetRadius", 0);
+        waveFoliageClearedRadius = view.getInt("WaveFoliageClearedRadius", 0);
+        waveSweepActive = false;
     }
 
     @Override
@@ -158,6 +186,9 @@ public class HammerStrikeEntity extends Entity {
 
         view.putInt("StrikeTicks", strikeTicks);
         view.putFloat("LastWaveRadius", lastWaveRadius);
+        view.putBoolean("CraterCarveScheduled", craterCarveScheduled);
+        view.putInt("WaveTargetRadius", waveTargetRadius);
+        view.putInt("WaveFoliageClearedRadius", waveFoliageClearedRadius);
     }
 
     @Override
@@ -169,10 +200,17 @@ public class HammerStrikeEntity extends Entity {
         }
 
         ServerWorld world = (ServerWorld) getEntityWorld();
+        if (!isPreview() && waveTargetRadius > waveFoliageClearedRadius && (strikeTicks % WAVE_SWEEP_INTERVAL_TICKS) == 0) {
+            tickWaveFoliageSweep(world);
+        }
 
         switch (strikeTicks) {
             case STAGE_1_TARGETING_START -> {
                 enterStage(world, HammerStage.TARGETING);
+                if (!isPreview() && !craterCarveScheduled) {
+                    craterCarveScheduled = true;
+                    scheduleCraterCarve(world);
+                }
                 if (!isPreview()) {
                     if (strikeTicks >= STAGE_4_ERUPTION_START && strikeTicks <= STAGE_4_ERUPTION_END) {
                         tickEruption(world);
@@ -183,8 +221,12 @@ public class HammerStrikeEntity extends Entity {
                 }
 
                 if (strikeTicks >= (STAGE_6_AFTERMATH_END + 1)) {
-                    discard();
-                    return;
+                    if (!isPreview() && hasPendingFoliageWork()) {
+                        // Keep the entity alive until the foliage sweep catches up, so the full wave radius is processed.
+                    } else {
+                        discard();
+                        return;
+                    }
                 }
 
                 strikeTicks++;
@@ -201,8 +243,11 @@ public class HammerStrikeEntity extends Entity {
                 }
 
                 if (strikeTicks >= (STAGE_6_AFTERMATH_END + 1)) {
-                    discard();
-                    return;
+                    if (!isPreview() && hasPendingFoliageWork()) {
+                    } else {
+                        discard();
+                        return;
+                    }
                 }
 
                 strikeTicks++;
@@ -219,8 +264,11 @@ public class HammerStrikeEntity extends Entity {
                 }
 
                 if (strikeTicks >= (STAGE_6_AFTERMATH_END + 1)) {
-                    discard();
-                    return;
+                    if (!isPreview() && hasPendingFoliageWork()) {
+                    } else {
+                        discard();
+                        return;
+                    }
                 }
 
                 strikeTicks++;
@@ -238,8 +286,11 @@ public class HammerStrikeEntity extends Entity {
                 }
 
                 if (strikeTicks >= (STAGE_6_AFTERMATH_END + 1)) {
-                    discard();
-                    return;
+                    if (!isPreview() && hasPendingFoliageWork()) {
+                    } else {
+                        discard();
+                        return;
+                    }
                 }
 
                 strikeTicks++;
@@ -256,8 +307,11 @@ public class HammerStrikeEntity extends Entity {
                 }
 
                 if (strikeTicks >= (STAGE_6_AFTERMATH_END + 1)) {
-                    discard();
-                    return;
+                    if (!isPreview() && hasPendingFoliageWork()) {
+                    } else {
+                        discard();
+                        return;
+                    }
                 }
 
                 strikeTicks++;
@@ -275,8 +329,11 @@ public class HammerStrikeEntity extends Entity {
                 }
 
                 if (strikeTicks >= (STAGE_6_AFTERMATH_END + 1)) {
-                    discard();
-                    return;
+                    if (!isPreview() && hasPendingFoliageWork()) {
+                    } else {
+                        discard();
+                        return;
+                    }
                 }
 
                 strikeTicks++;
@@ -292,13 +349,76 @@ public class HammerStrikeEntity extends Entity {
                 }
 
                 if (strikeTicks >= (STAGE_6_AFTERMATH_END + 1)) {
-                    discard();
-                    return;
+                    if (!isPreview() && hasPendingFoliageWork()) {
+                    } else {
+                        discard();
+                        return;
+                    }
                 }
 
                 strikeTicks++;
             }
         }
+    }
+
+    private boolean hasPendingFoliageWork() {
+        return waveTargetRadius > waveFoliageClearedRadius || waveSweepActive;
+    }
+
+    private void scheduleCraterCarve(ServerWorld world) {
+        BlockPos center = getTargetPos();
+        ServerPlayerEntity owner = getOwnerPlayer(world);
+
+        int surfaceY = center.getY();
+        int maxBuildY = world.getBottomY() + world.getHeight() - 1;
+        int maxY = Math.min(maxBuildY, surfaceY + TOP_CLEAR_HEIGHT_BLOCKS);
+        int minY = Math.max(world.getBottomY(), surfaceY - IMPACT_DEPTH_BLOCKS);
+        int actualDepth = Math.max(1, surfaceY - minY);
+        int craterRadiusSquared = ERUPTION_RADIUS * ERUPTION_RADIUS;
+
+        int requiredBoundingRadius = MathHelper.ceil(MathHelper.sqrt(craterRadiusSquared + actualDepth * actualDepth)) + 2;
+        float power = Math.max(64.0F, requiredBoundingRadius / 1.25F);
+        float energyMultiplier = MathHelper.clamp(1.0F + (actualDepth / 16.0F), 1.0F, 12.0F);
+
+        Vec3d explosionCenter = new Vec3d(center.getX() + 0.5D, surfaceY + 0.5D, center.getZ() + 0.5D);
+        ExplosionImpl explosion = new ExplosionImpl(world, null, null, null, explosionCenter, power, false, Explosion.DestructionType.DESTROY);
+
+        BiPredicate<BlockPos, BlockState> canAffectBlock = (pos, state) -> {
+            int y = pos.getY();
+            if (y < minY || y > maxY) {
+                return false;
+            }
+
+            int dx = pos.getX() - center.getX();
+            int dz = pos.getZ() - center.getZ();
+
+            if (y > surfaceY) {
+                if ((dx * dx + dz * dz) > craterRadiusSquared) {
+                    return false;
+                }
+            } else {
+                int depth = surfaceY - y;
+                float t = depth / (float) actualDepth;
+                float radiusAtDepth = MathHelper.lerp(t, (float) ERUPTION_RADIUS, (float) ERUPTION_RADIUS * 0.45F);
+                if ((dx * dx + dz * dz) > (radiusAtDepth * radiusAtDepth)) {
+                    return false;
+                }
+            }
+
+            if (state.isAir()) {
+                return true;
+            }
+            if (state.isOf(Blocks.BEDROCK) || state.isOf(Blocks.END_PORTAL_FRAME)) {
+                return false;
+            }
+            if (world.getBlockEntity(pos) != null) {
+                return false;
+            }
+            return owner == null || HammerProtection.canDamageBlock(world, pos, owner);
+        };
+
+        long seed = (((long) getSeed()) << 32) ^ center.asLong() ^ world.getTime();
+        ExplosionCarver.schedule(world, explosion, seed, canAffectBlock, false, energyMultiplier);
     }
 
     private void enterStage(ServerWorld world, HammerStage stage) {
@@ -320,14 +440,14 @@ public class HammerStrikeEntity extends Entity {
                 int x = center.getX() + dx;
                 int z = center.getZ() + dz;
                 craterColumns.add(new BlockPos(x, center.getY(), z));
-
-                int topY = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, x, z);
-                int surfaceY = Math.max(world.getBottomY(), topY - 1);
-                for (int dy = 0; dy < ERUPTION_LAYERS; dy++) {
-                    eruptionQueue.add(new BlockPos(x, surfaceY - dy, z));
-                }
             }
         }
+
+        if (isPreview()) {
+            return;
+        }
+
+        ServerPlayerEntity owner = getOwnerPlayer(world);
 
         vaporizeWeakMobs(world);
     }
@@ -367,56 +487,128 @@ public class HammerStrikeEntity extends Entity {
         float progress = (strikeTicks - STAGE_5_WAVE_START) / (float) Math.max(1, (STAGE_5_WAVE_END - STAGE_5_WAVE_START));
         float radius = MathHelper.clamp(progress, 0.0F, 1.0F) * WAVE_RADIUS;
 
-        breakWaveBlocks(world, lastWaveRadius, radius);
         lastWaveRadius = radius;
+        waveTargetRadius = Math.max(waveTargetRadius, MathHelper.ceil(radius));
     }
 
-    private void breakWaveBlocks(ServerWorld world, float previousRadius, float currentRadius) {
-        if (currentRadius <= previousRadius + 0.001F) {
+    private void tickWaveFoliageSweep(ServerWorld world) {
+        int targetRadius = waveTargetRadius;
+        int startRadius = waveFoliageClearedRadius;
+        if (targetRadius <= startRadius) {
             return;
+        }
+
+        if (!waveSweepActive) {
+            waveSweepRStart = startRadius;
+            waveSweepREnd = Math.min(targetRadius, startRadius + WAVE_BAND_THICKNESS_BLOCKS);
+            waveSweepDx = -waveSweepREnd;
+            setupWaveSweepForDx();
+            waveSweepActive = true;
         }
 
         ServerPlayerEntity owner = getOwnerPlayer(world);
         BlockPos center = getTargetPos();
-        int minY = Math.max(world.getBottomY(), center.getY() - 2);
-        int maxY = Math.min(world.getTopYInclusive(), center.getY() + 32);
+        int centerX = center.getX();
+        int centerZ = center.getZ();
+        int minY = Math.max(world.getBottomY(), center.getY() - 8);
+        int maxY = Math.min(world.getTopYInclusive(), center.getY() + WAVE_CLEAR_HEIGHT_BLOCKS);
 
-        float thickness = 2.0F;
-        float start = Math.max(previousRadius, Math.max(0.0F, currentRadius - thickness));
-
-        int samples = MathHelper.clamp((int) Math.ceil(MathHelper.TAU * currentRadius / 0.65F), 24, 1024);
-        for (int i = 0; i < samples; i++) {
-            double theta = (Math.PI * 2.0D) * (i / (double) samples);
-            double cos = Math.cos(theta);
-            double sin = Math.sin(theta);
-
-            for (float r = start; r <= currentRadius; r += 0.85F) {
-                int x = MathHelper.floor(center.getX() + 0.5D + cos * r);
-                int z = MathHelper.floor(center.getZ() + 0.5D + sin * r);
-
-                for (int y = minY; y <= maxY; y++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    if (owner != null && !HammerProtection.canDamageBlock(world, pos, owner)) {
-                        continue;
-                    }
-                    if (world.getBlockEntity(pos) != null) {
-                        continue;
-                    }
-
-                    BlockState state = world.getBlockState(pos);
-                    if (state.isAir() || !shouldWaveShatterBlock(state)) {
-                        continue;
-                    }
-
-                    world.setBlockState(pos, Blocks.AIR.getDefaultState(), Block.NOTIFY_ALL);
-                    world.syncWorldEvent(WorldEvents.BLOCK_BROKEN, pos, Block.getRawIdFromState(state));
-                }
+        BlockPos.Mutable pos = new BlockPos.Mutable();
+        int columnsProcessed = 0;
+        while (columnsProcessed < WAVE_COLUMNS_PER_TICK && waveSweepActive) {
+            int rEnd = waveSweepREnd;
+            if (waveSweepDx > rEnd) {
+                waveFoliageClearedRadius = waveSweepREnd;
+                waveSweepActive = false;
+                break;
             }
+
+            if (waveSweepDz > waveSweepDzMax) {
+                waveSweepDx++;
+                setupWaveSweepForDx();
+                continue;
+            }
+
+            int x = centerX + waveSweepDx;
+            int dz = waveSweepDz;
+            int z = centerZ + (waveSweepNegPending ? -dz : dz);
+
+            if (world.isChunkLoaded(ChunkPos.toLong(x >> 4, z >> 4))) {
+                clearWaveColumnDynamicY(world, owner, pos, x, z, minY, maxY);
+            }
+            columnsProcessed++;
+
+            if (dz == 0) {
+                waveSweepDz++;
+                continue;
+            }
+
+            if (!waveSweepNegPending) {
+                waveSweepNegPending = true;
+            } else {
+                waveSweepNegPending = false;
+                waveSweepDz++;
+            }
+        }
+
+    }
+
+    private void setupWaveSweepForDx() {
+        waveSweepNegPending = false;
+
+        int rStart = waveSweepRStart;
+        int rEnd = waveSweepREnd;
+
+        int dxSq = waveSweepDx * waveSweepDx;
+        int dzMaxSq = rEnd * rEnd - dxSq;
+        if (dzMaxSq < 0) {
+            waveSweepDzMin = 0;
+            waveSweepDzMax = -1;
+            waveSweepDz = 0;
+            return;
+        }
+
+        waveSweepDzMax = MathHelper.floor(MathHelper.sqrt(dzMaxSq));
+        int dzMinSq = rStart * rStart - dxSq;
+        waveSweepDzMin = dzMinSq > 0 ? MathHelper.floor(MathHelper.sqrt(dzMinSq)) : -1;
+        waveSweepDz = waveSweepDzMin + 1;
+    }
+
+    private void clearWaveColumnDynamicY(ServerWorld world, @Nullable ServerPlayerEntity owner, BlockPos.Mutable pos, int x, int z, int minY, int maxY) {
+        int topY = world.getTopY(Heightmap.Type.WORLD_SURFACE, x, z) - 1;
+        int yStart = Math.min(maxY, topY);
+        if (yStart < minY) {
+            return;
+        }
+
+        int yEnd = Math.max(minY, yStart - WAVE_SCAN_DEPTH_BLOCKS);
+        for (int y = yStart; y >= yEnd; y--) {
+            pos.set(x, y, z);
+            BlockState state = world.getBlockState(pos);
+            if (state.isAir() || !shouldWaveShatterBlock(state)) {
+                continue;
+            }
+            if (owner != null && !HammerProtection.canDamageBlock(world, pos, owner)) {
+                continue;
+            }
+            world.setBlockState(pos, Blocks.AIR.getDefaultState(), Block.NOTIFY_ALL);
         }
     }
 
     private boolean shouldWaveShatterBlock(BlockState state) {
         if (state.isIn(BlockTags.LEAVES) || state.isIn(BlockTags.FLOWERS) || state.isIn(BlockTags.SMALL_FLOWERS)) {
+            return true;
+        }
+        if (state.isOf(Blocks.VINE)
+                || state.isOf(Blocks.CAVE_VINES)
+                || state.isOf(Blocks.CAVE_VINES_PLANT)
+                || state.isOf(Blocks.WEEPING_VINES)
+                || state.isOf(Blocks.WEEPING_VINES_PLANT)
+                || state.isOf(Blocks.TWISTING_VINES)
+                || state.isOf(Blocks.TWISTING_VINES_PLANT)) {
+            return true;
+        }
+        if (state.isOf(Blocks.SHORT_GRASS) || state.isOf(Blocks.TALL_GRASS) || state.isOf(Blocks.FERN) || state.isOf(Blocks.LARGE_FERN)) {
             return true;
         }
         if (state.isIn(GLASS_BLOCKS) || state.isIn(GLASS_PANES) || state.isOf(Blocks.TINTED_GLASS)) {
@@ -426,48 +618,6 @@ public class HammerStrikeEntity extends Entity {
     }
 
     private void buildScorchedFloor(ServerWorld world) {
-        if (craterColumns.isEmpty()) {
-            BlockPos center = getTargetPos();
-            for (int dx = -ERUPTION_RADIUS; dx <= ERUPTION_RADIUS; dx++) {
-                for (int dz = -ERUPTION_RADIUS; dz <= ERUPTION_RADIUS; dz++) {
-                    if ((dx * dx + dz * dz) > (ERUPTION_RADIUS * ERUPTION_RADIUS)) {
-                        continue;
-                    }
-                    craterColumns.add(new BlockPos(center.getX() + dx, center.getY(), center.getZ() + dz));
-                }
-            }
-        }
-
-        ServerPlayerEntity owner = getOwnerPlayer(world);
-        for (int i = 0; i < craterColumns.size(); i++) {
-            BlockPos column = craterColumns.get(i);
-            int x = column.getX();
-            int z = column.getZ();
-
-            int topY = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, x, z);
-            int surfaceY = Math.max(world.getBottomY(), topY - 1);
-            BlockPos pos = new BlockPos(x, surfaceY, z);
-
-            if (owner != null && !HammerProtection.canDamageBlock(world, pos, owner)) {
-                continue;
-            }
-            if (world.getBlockEntity(pos) != null) {
-                continue;
-            }
-
-            BlockState current = world.getBlockState(pos);
-            if (current.isAir() || current.getHardness(world, pos) < 0.0F) {
-                continue;
-            }
-
-            float roll = world.getRandom().nextFloat();
-            BlockState replacement = roll < 0.40F
-                    ? Blocks.BLACKSTONE.getDefaultState()
-                    : roll < 0.70F
-                    ? Blocks.MAGMA_BLOCK.getDefaultState()
-                    : Blocks.CRYING_OBSIDIAN.getDefaultState();
-            world.setBlockState(pos, replacement, Block.NOTIFY_ALL);
-        }
     }
 
     private void vaporizeWeakMobs(ServerWorld world) {

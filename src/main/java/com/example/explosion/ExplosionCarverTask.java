@@ -24,6 +24,7 @@ import net.minecraft.world.explosion.ExplosionImpl;
 
 import java.util.Optional;
 import java.util.function.BiConsumer;
+import java.util.function.BiPredicate;
 
 public final class ExplosionCarverTask {
     private static final float ENERGY_SCALE = 0.60F;
@@ -75,6 +76,8 @@ public final class ExplosionCarverTask {
     private final BlockPos.Mutable scratchPos = new BlockPos.Mutable();
     private final BiConsumer<ItemStack, BlockPos> dropConsumer;
     private final int dropInnerRadiusSquared;
+    private final BiPredicate<BlockPos, BlockState> canAffectBlock;
+    private final float initialEnergyMultiplier;
 
     // Per-task resistance cache keyed by state raw id (jitter is applied after caching).
     private final Int2FloatOpenHashMap baseResistanceCostByStateId = new Int2FloatOpenHashMap();
@@ -102,10 +105,31 @@ public final class ExplosionCarverTask {
     }
 
     public ExplosionCarverTask(ExplosionImpl explosion, long seed) {
+        this(explosion, seed, null, true);
+    }
+
+    public ExplosionCarverTask(
+            ExplosionImpl explosion,
+            long seed,
+            BiPredicate<BlockPos, BlockState> canAffectBlock,
+            boolean dropsEnabled
+    ) {
+        this(explosion, seed, canAffectBlock, dropsEnabled, 1.0F);
+    }
+
+    public ExplosionCarverTask(
+            ExplosionImpl explosion,
+            long seed,
+            BiPredicate<BlockPos, BlockState> canAffectBlock,
+            boolean dropsEnabled,
+            float initialEnergyMultiplier
+    ) {
         this.explosion = explosion;
         this.seed = seed;
         this.world = explosion.getWorld();
         this.behavior = ((ExplosionImplAccessor) explosion).modid$getBehavior();
+        this.canAffectBlock = canAffectBlock;
+        this.initialEnergyMultiplier = MathHelper.clamp(initialEnergyMultiplier, 0.0F, 1_000.0F);
 
         Vec3d pos = explosion.getPosition();
         this.origin = BlockPos.ofFloored(pos);
@@ -113,14 +137,18 @@ public final class ExplosionCarverTask {
         this.originY = origin.getY();
         this.originZ = origin.getZ();
 
-        this.dropConsumer = (stack, dropPos) -> Block.dropStack(world, dropPos, stack);
+        this.dropConsumer = dropsEnabled ? (stack, dropPos) -> Block.dropStack(world, dropPos, stack) : NO_DROPS_CONSUMER;
 
         float power = explosion.getPower();
         this.boundingRadius = MathHelper.clamp(MathHelper.ceil(power * BOUNDING_RADIUS_MULTIPLIER), 1, MAX_BOUNDING_RADIUS);
         this.boundingRadiusSquared = boundingRadius * boundingRadius;
 
-        int dropsRadius = MathHelper.clamp((int) Math.floor(Math.sqrt(power)), DROPS_INNER_RADIUS_MIN, DROPS_INNER_RADIUS_MAX);
-        this.dropInnerRadiusSquared = dropsRadius * dropsRadius;
+        if (dropsEnabled) {
+            int dropsRadius = MathHelper.clamp((int) Math.floor(Math.sqrt(power)), DROPS_INNER_RADIUS_MIN, DROPS_INNER_RADIUS_MAX);
+            this.dropInnerRadiusSquared = dropsRadius * dropsRadius;
+        } else {
+            this.dropInnerRadiusSquared = -1;
+        }
 
         this.baseResistanceCostByStateId.defaultReturnValue(Float.NaN);
 
@@ -140,11 +168,15 @@ public final class ExplosionCarverTask {
 
         int initialEnergyFp = toEnergyFp(computeInitialEnergy(power));
         long originLong = origin.asLong();
-        setBestEnergy(originLong, 0, 0, 0, initialEnergyFp);
-        frontier.enqueue(originLong);
 
         BlockState originState = world.getBlockState(origin);
-        maybeQueueForBreaking(originLong, 0, initialEnergyFp, originState, origin);
+        if (originState.isAir() || canAffectBlock == null || canAffectBlock.test(origin, originState)) {
+            setBestEnergy(originLong, 0, 0, 0, initialEnergyFp);
+            frontier.enqueue(originLong);
+            maybeQueueForBreaking(originLong, 0, initialEnergyFp, originState, origin);
+        } else {
+            bfsFinished = true;
+        }
     }
 
     public Progress tick(int maxNodeExpansions, int maxBlockBreaks, int maxDropBlocks) {
@@ -231,6 +263,9 @@ public final class ExplosionCarverTask {
             return;
         }
         BlockState state = world.getBlockState(scratchPos);
+        if (canAffectBlock != null && !canAffectBlock.test(scratchPos, state)) {
+            return;
+        }
         int resistanceCostFp = getResistanceCostFp(state, scratchPos, posLong);
         int newEnergyFp = fromEnergyFp - STEP_COST_FP - resistanceCostFp;
         if (newEnergyFp <= MIN_PROPAGATION_ENERGY_FP) {
@@ -366,6 +401,9 @@ public final class ExplosionCarverTask {
                 if (state.isAir()) {
                     continue;
                 }
+                if (canAffectBlock != null && !canAffectBlock.test(scratchPos, state)) {
+                    continue;
+                }
 
                 float hardness = state.getHardness(world, scratchPos);
                 if (hardness < 0.0F) {
@@ -433,6 +471,9 @@ public final class ExplosionCarverTask {
                 if (state.isAir()) {
                     continue;
                 }
+                if (canAffectBlock != null && !canAffectBlock.test(scratchPos, state)) {
+                    continue;
+                }
 
                 float hardness = state.getHardness(world, scratchPos);
                 if (hardness < 0.0F) {
@@ -462,7 +503,7 @@ public final class ExplosionCarverTask {
     private float computeInitialEnergy(float power) {
         float rand01 = hashToUnitFloat(seed);
         float vanillaLike = power * (0.7F + 0.6F * rand01);
-        return vanillaLike * ENERGY_SCALE;
+        return vanillaLike * ENERGY_SCALE * initialEnergyMultiplier;
     }
 
     private int getResistanceCostFp(BlockState state, BlockPos pos, long posLong) {
