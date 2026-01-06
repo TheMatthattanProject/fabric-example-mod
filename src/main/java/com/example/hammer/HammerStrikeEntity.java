@@ -80,6 +80,7 @@ public class HammerStrikeEntity extends Entity {
     private static final int WAVE_COLUMNS_PER_TICK = 600;
     private static final int WAVE_BAND_THICKNESS_BLOCKS = 6;
     private static final int WAVE_SCAN_DEPTH_BLOCKS = 64;
+    private static final int LOW_FOLIAGE_SCAN_HEIGHT_BLOCKS = 24;
     private static final int PLAYER_EFFECT_RADIUS = 100;
 
     private final Deque<BlockPos> eruptionQueue = new ArrayDeque<>();
@@ -577,12 +578,30 @@ public class HammerStrikeEntity extends Entity {
     private void clearWaveColumnDynamicY(ServerWorld world, @Nullable ServerPlayerEntity owner, BlockPos.Mutable pos, int x, int z, int minY, int maxY) {
         int topY = world.getTopY(Heightmap.Type.WORLD_SURFACE, x, z) - 1;
         int yStart = Math.min(maxY, topY);
-        if (yStart < minY) {
+
+        if (yStart >= minY) {
+            int yEnd = Math.max(minY, yStart - WAVE_SCAN_DEPTH_BLOCKS);
+            for (int y = yStart; y >= yEnd; y--) {
+                pos.set(x, y, z);
+                BlockState state = world.getBlockState(pos);
+                if (state.isAir() || !shouldWaveShatterBlock(state)) {
+                    continue;
+                }
+                if (owner != null && !HammerProtection.canDamageBlock(world, pos, owner)) {
+                    continue;
+                }
+                world.setBlockState(pos, Blocks.AIR.getDefaultState(), Block.NOTIFY_ALL);
+            }
+        }
+
+        int groundY = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
+        int lowStart = Math.max(minY, groundY);
+        int lowEnd = Math.min(maxY, groundY + LOW_FOLIAGE_SCAN_HEIGHT_BLOCKS);
+        if (lowEnd < lowStart) {
             return;
         }
 
-        int yEnd = Math.max(minY, yStart - WAVE_SCAN_DEPTH_BLOCKS);
-        for (int y = yStart; y >= yEnd; y--) {
+        for (int y = lowStart; y <= lowEnd; y++) {
             pos.set(x, y, z);
             BlockState state = world.getBlockState(pos);
             if (state.isAir() || !shouldWaveShatterBlock(state)) {
