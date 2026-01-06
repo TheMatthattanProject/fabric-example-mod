@@ -6,7 +6,6 @@ import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityType;
-import net.minecraft.entity.FallingBlockEntity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.data.DataTracker;
 import net.minecraft.entity.data.TrackedData;
@@ -339,7 +338,6 @@ public class HammerStrikeEntity extends Entity {
         int budget = MathHelper.clamp(Math.max(dynamicBudget, ERUPTION_BLOCKS_PER_TICK), 1, 10_000);
 
         ServerPlayerEntity owner = getOwnerPlayer(world);
-        Vec3d center = new Vec3d(getX(), getY(), getZ());
 
         for (int i = 0; i < budget; i++) {
             BlockPos pos = eruptionQueue.pollFirst();
@@ -361,21 +359,7 @@ public class HammerStrikeEntity extends Entity {
                 continue;
             }
 
-            FallingBlockEntity falling = FallingBlockEntity.spawnFromBlock(world, pos, state);
-            if (falling == null) {
-                continue;
-            }
-
-            Vec3d blockCenter = new Vec3d(pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D);
-            Vec3d radial = new Vec3d(blockCenter.x - center.x, 0.0D, blockCenter.z - center.z);
-            if (radial.lengthSquared() < 1.0E-6D) {
-                radial = new Vec3d(world.getRandom().nextDouble() - 0.5D, 0.0D, world.getRandom().nextDouble() - 0.5D);
-            }
-
-            Vec3d v = radial.normalize().multiply(2.0D).add(0.0D, 2.5D, 0.0D);
-            falling.setVelocity(v);
-            falling.velocityDirty = true;
-            falling.dropItem = false;
+            world.setBlockState(pos, Blocks.AIR.getDefaultState(), Block.NOTIFY_ALL);
         }
     }
 
