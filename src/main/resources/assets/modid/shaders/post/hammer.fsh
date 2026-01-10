@@ -14,6 +14,7 @@ layout(std140) uniform HammerConfig {
     float RingRadius;
     float RingStrength;
     float GlitchStrength;
+    float BeamStrength;
 };
 
 out vec4 fragColor;
@@ -64,6 +65,13 @@ void main() {
         desat += staticN;
 
         base = vec4(desat, 1.0);
+    }
+
+    if (BeamStrength > 0.001) {
+        float beam = clamp(BeamStrength, 0.0, 1.0);
+        float glow = 0.08 + 0.18 * beam;
+        float shimmer = sin((uv.y * OutSize.y) * 0.012 + Time * 8.0) * 0.02 * beam;
+        base.rgb = min(base.rgb + vec3(glow + shimmer, glow * 0.8, glow * 0.8), vec3(1.0));
     }
 
     fragColor = vec4(base.rgb, 1.0);

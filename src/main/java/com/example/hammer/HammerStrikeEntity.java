@@ -42,7 +42,7 @@ import java.util.function.BiPredicate;
 /**
  * Server-authoritative tick-based state machine for THE HAMMER.
  *
- * <p>All stage transitions and timeline control flow are driven by {@code switch (strikeTicks)}.
+ * <p>All stage transitions and timeline control flow are driven by {@code strikeTicks}.
  * The server emits {@link HammerNetworking#sendStage} packets at each stage transition; clients are
  * responsible for the cinematic VFX (fog, shaders, camera shake, rendering, particles).
  */
@@ -54,19 +54,6 @@ public class HammerStrikeEntity extends Entity {
 
     private static final TagKey<Block> GLASS_BLOCKS = TagKey.of(RegistryKeys.BLOCK, Identifier.ofVanilla("glass"));
     private static final TagKey<Block> GLASS_PANES = TagKey.of(RegistryKeys.BLOCK, Identifier.ofVanilla("glass_panes"));
-
-    private static final int STAGE_1_TARGETING_START = 0;
-    private static final int STAGE_1_TARGETING_END = 30;
-    private static final int STAGE_2_BREACH_START = 31;
-    private static final int STAGE_2_BREACH_END = 45;
-    private static final int STAGE_3_STROKE_START = 46;
-    private static final int STAGE_3_STROKE_END = 80;
-    private static final int STAGE_4_ERUPTION_START = 81;
-    private static final int STAGE_4_ERUPTION_END = 100;
-    private static final int STAGE_5_WAVE_START = 85;
-    private static final int STAGE_5_WAVE_END = 130;
-    private static final int STAGE_6_AFTERMATH_START = 131;
-    private static final int STAGE_6_AFTERMATH_END = 220;
 
     private static final int ERUPTION_RADIUS = 38;
     private static final int ERUPTION_LAYERS = 6;
@@ -205,161 +192,50 @@ public class HammerStrikeEntity extends Entity {
             tickWaveFoliageSweep(world);
         }
 
-        switch (strikeTicks) {
-            case STAGE_1_TARGETING_START -> {
-                enterStage(world, HammerStage.TARGETING);
-                if (!isPreview() && !craterCarveScheduled) {
-                    craterCarveScheduled = true;
-                    scheduleCraterCarve(world);
-                }
-                if (!isPreview()) {
-                    if (strikeTicks >= STAGE_4_ERUPTION_START && strikeTicks <= STAGE_4_ERUPTION_END) {
-                        tickEruption(world);
-                    }
-                    if (strikeTicks >= STAGE_5_WAVE_START && strikeTicks <= STAGE_5_WAVE_END) {
-                        tickPressureWave(world);
-                    }
-                }
-
-                if (strikeTicks >= (STAGE_6_AFTERMATH_END + 1)) {
-                    if (!isPreview() && hasPendingFoliageWork()) {
-                        // Keep the entity alive until the foliage sweep catches up, so the full wave radius is processed.
-                    } else {
-                        discard();
-                        return;
-                    }
-                }
-
-                strikeTicks++;
-            }
-            case STAGE_2_BREACH_START -> {
-                enterStage(world, HammerStage.ATMOSPHERIC_BREACH);
-                if (!isPreview()) {
-                    if (strikeTicks >= STAGE_4_ERUPTION_START && strikeTicks <= STAGE_4_ERUPTION_END) {
-                        tickEruption(world);
-                    }
-                    if (strikeTicks >= STAGE_5_WAVE_START && strikeTicks <= STAGE_5_WAVE_END) {
-                        tickPressureWave(world);
-                    }
-                }
-
-                if (strikeTicks >= (STAGE_6_AFTERMATH_END + 1)) {
-                    if (!isPreview() && hasPendingFoliageWork()) {
-                    } else {
-                        discard();
-                        return;
-                    }
-                }
-
-                strikeTicks++;
-            }
-            case STAGE_3_STROKE_START -> {
-                enterStage(world, HammerStage.HAMMER_STROKE);
-                if (!isPreview()) {
-                    if (strikeTicks >= STAGE_4_ERUPTION_START && strikeTicks <= STAGE_4_ERUPTION_END) {
-                        tickEruption(world);
-                    }
-                    if (strikeTicks >= STAGE_5_WAVE_START && strikeTicks <= STAGE_5_WAVE_END) {
-                        tickPressureWave(world);
-                    }
-                }
-
-                if (strikeTicks >= (STAGE_6_AFTERMATH_END + 1)) {
-                    if (!isPreview() && hasPendingFoliageWork()) {
-                    } else {
-                        discard();
-                        return;
-                    }
-                }
-
-                strikeTicks++;
-            }
-            case STAGE_4_ERUPTION_START -> {
-                enterStage(world, HammerStage.KINETIC_ERUPTION);
-                beginEruption(world);
-                if (!isPreview()) {
-                    if (strikeTicks >= STAGE_4_ERUPTION_START && strikeTicks <= STAGE_4_ERUPTION_END) {
-                        tickEruption(world);
-                    }
-                    if (strikeTicks >= STAGE_5_WAVE_START && strikeTicks <= STAGE_5_WAVE_END) {
-                        tickPressureWave(world);
-                    }
-                }
-
-                if (strikeTicks >= (STAGE_6_AFTERMATH_END + 1)) {
-                    if (!isPreview() && hasPendingFoliageWork()) {
-                    } else {
-                        discard();
-                        return;
-                    }
-                }
-
-                strikeTicks++;
-            }
-            case STAGE_5_WAVE_START -> {
-                enterStage(world, HammerStage.PRESSURE_WAVE);
-                if (!isPreview()) {
-                    if (strikeTicks >= STAGE_4_ERUPTION_START && strikeTicks <= STAGE_4_ERUPTION_END) {
-                        tickEruption(world);
-                    }
-                    if (strikeTicks >= STAGE_5_WAVE_START && strikeTicks <= STAGE_5_WAVE_END) {
-                        tickPressureWave(world);
-                    }
-                }
-
-                if (strikeTicks >= (STAGE_6_AFTERMATH_END + 1)) {
-                    if (!isPreview() && hasPendingFoliageWork()) {
-                    } else {
-                        discard();
-                        return;
-                    }
-                }
-
-                strikeTicks++;
-            }
-            case STAGE_6_AFTERMATH_START -> {
-                enterStage(world, HammerStage.AFTERMATH_SIGNAL_LOSS);
-                buildScorchedFloor(world);
-                if (!isPreview()) {
-                    if (strikeTicks >= STAGE_4_ERUPTION_START && strikeTicks <= STAGE_4_ERUPTION_END) {
-                        tickEruption(world);
-                    }
-                    if (strikeTicks >= STAGE_5_WAVE_START && strikeTicks <= STAGE_5_WAVE_END) {
-                        tickPressureWave(world);
-                    }
-                }
-
-                if (strikeTicks >= (STAGE_6_AFTERMATH_END + 1)) {
-                    if (!isPreview() && hasPendingFoliageWork()) {
-                    } else {
-                        discard();
-                        return;
-                    }
-                }
-
-                strikeTicks++;
-            }
-            default -> {
-                if (!isPreview()) {
-                    if (strikeTicks >= STAGE_4_ERUPTION_START && strikeTicks <= STAGE_4_ERUPTION_END) {
-                        tickEruption(world);
-                    }
-                    if (strikeTicks >= STAGE_5_WAVE_START && strikeTicks <= STAGE_5_WAVE_END) {
-                        tickPressureWave(world);
-                    }
-                }
-
-                if (strikeTicks >= (STAGE_6_AFTERMATH_END + 1)) {
-                    if (!isPreview() && hasPendingFoliageWork()) {
-                    } else {
-                        discard();
-                        return;
-                    }
-                }
-
-                strikeTicks++;
+        if (strikeTicks == HammerStrikeTimeline.STAGE_1_TARGETING_START) {
+            enterStage(world, HammerStage.TARGETING);
+            if (!isPreview() && !craterCarveScheduled) {
+                craterCarveScheduled = true;
+                scheduleCraterCarve(world);
             }
         }
+        if (strikeTicks == HammerStrikeTimeline.STAGE_2_BREACH_START) {
+            enterStage(world, HammerStage.ATMOSPHERIC_BREACH);
+        }
+        if (strikeTicks == HammerStrikeTimeline.STAGE_3_STROKE_START) {
+            enterStage(world, HammerStage.HAMMER_STROKE);
+        }
+        if (strikeTicks == HammerStrikeTimeline.STAGE_4_ERUPTION_START) {
+            enterStage(world, HammerStage.KINETIC_ERUPTION);
+            beginEruption(world);
+        }
+        if (strikeTicks == HammerStrikeTimeline.STAGE_5_WAVE_START) {
+            enterStage(world, HammerStage.PRESSURE_WAVE);
+        }
+        if (strikeTicks == HammerStrikeTimeline.STAGE_6_AFTERMATH_START) {
+            enterStage(world, HammerStage.AFTERMATH_SIGNAL_LOSS);
+            buildScorchedFloor(world);
+        }
+
+        if (!isPreview()) {
+            if (strikeTicks >= HammerStrikeTimeline.STAGE_4_ERUPTION_START && strikeTicks <= HammerStrikeTimeline.STAGE_4_ERUPTION_END) {
+                tickEruption(world);
+            }
+            if (strikeTicks >= HammerStrikeTimeline.STAGE_5_WAVE_START && strikeTicks <= HammerStrikeTimeline.STAGE_5_WAVE_END) {
+                tickPressureWave(world);
+            }
+        }
+
+        if (strikeTicks >= (HammerStrikeTimeline.STAGE_6_AFTERMATH_END + 1)) {
+            if (!isPreview() && hasPendingFoliageWork()) {
+                // Keep the entity alive until the foliage sweep catches up, so the full wave radius is processed.
+            } else {
+                discard();
+                return;
+            }
+        }
+
+        strikeTicks++;
     }
 
     private boolean hasPendingFoliageWork() {
@@ -454,7 +330,7 @@ public class HammerStrikeEntity extends Entity {
     }
 
     private void tickEruption(ServerWorld world) {
-        int remainingTicks = Math.max(1, (STAGE_4_ERUPTION_END + 1) - strikeTicks);
+        int remainingTicks = Math.max(1, (HammerStrikeTimeline.STAGE_4_ERUPTION_END + 1) - strikeTicks);
         int dynamicBudget = (int) Math.ceil(eruptionQueue.size() / (double) remainingTicks);
         int budget = MathHelper.clamp(Math.max(dynamicBudget, ERUPTION_BLOCKS_PER_TICK), 1, 10_000);
 
@@ -485,7 +361,7 @@ public class HammerStrikeEntity extends Entity {
     }
 
     private void tickPressureWave(ServerWorld world) {
-        float progress = (strikeTicks - STAGE_5_WAVE_START) / (float) Math.max(1, (STAGE_5_WAVE_END - STAGE_5_WAVE_START));
+        float progress = (strikeTicks - HammerStrikeTimeline.STAGE_5_WAVE_START) / (float) Math.max(1, (HammerStrikeTimeline.STAGE_5_WAVE_END - HammerStrikeTimeline.STAGE_5_WAVE_START));
         float radius = MathHelper.clamp(progress, 0.0F, 1.0F) * WAVE_RADIUS;
 
         lastWaveRadius = radius;

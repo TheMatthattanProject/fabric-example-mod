@@ -25,6 +25,7 @@ import net.minecraft.client.render.state.WorldRenderState;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.particle.ParticleTypes;
+import net.minecraft.particle.TintedParticleEffect;
 import net.minecraft.sound.SoundCategory;
 import net.minecraft.sound.SoundEvents;
 import net.minecraft.util.Identifier;
@@ -39,6 +40,8 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 
+import static com.example.hammer.HammerStrikeTimeline.*;
+
 @Environment(EnvType.CLIENT)
 public final class HammerClientEffects {
     private static final Identifier WHITE_TEXTURE = Identifier.ofVanilla("textures/misc/white.png");
@@ -51,19 +54,7 @@ public final class HammerClientEffects {
     private static final float TARGET_FOG_G = 0x0F / 255.0F;
     private static final float TARGET_FOG_B = 0x2E / 255.0F;
 
-    private static final int STAGE_1_TARGETING_END = 30;
-    private static final int STAGE_2_BREACH_START = 31;
-    private static final int STAGE_2_BREACH_END = 45;
-    private static final int STAGE_3_STROKE_START = 46;
-    private static final int STAGE_3_STROKE_END = 80;
-    private static final int STAGE_4_ERUPTION_START = 81;
-    private static final int STAGE_4_ERUPTION_END = 100;
-    private static final int STAGE_5_WAVE_START = 85;
-    private static final int STAGE_5_WAVE_END = 130;
-    private static final int STAGE_6_AFTERMATH_START = 131;
-    private static final int STAGE_6_AFTERMATH_END = 220;
-    private static final int STAGE_6_FINAL_CUT_START = 200;
-    private static final int STAGE_6_FINAL_CUT_TICKS = 20;
+
 
     private static final int LASER_TOP_Y = 320;
     private static final int CONE_TIP_START_Y = 300;
@@ -85,6 +76,7 @@ public final class HammerClientEffects {
     private static float ringRadiusNorm;
     private static float ringStrength;
     private static float glitchStrength;
+    private static float beamStrength;
 
     private HammerClientEffects() {
     }
@@ -115,6 +107,10 @@ public final class HammerClientEffects {
 
     public static float glitchStrength() {
         return glitchStrength;
+    }
+
+    public static float beamStrength() {
+        return beamStrength;
     }
 
     public static Vector4f fogTargetColor() {
@@ -151,6 +147,7 @@ public final class HammerClientEffects {
             ringRadiusNorm = 0.0F;
             ringStrength = 0.0F;
             glitchStrength = 0.0F;
+            beamStrength = 0.0F;
             clearPostEffect(client);
             return;
         }
@@ -166,6 +163,7 @@ public final class HammerClientEffects {
         float bestRingStrength = 0.0F;
         float bestRingRadiusNorm = 0.0F;
         float maxGlitch = 0.0F;
+        float maxBeam = 0.0F;
 
         Iterator<ClientStrikeState> it = STRIKES.values().iterator();
         while (it.hasNext()) {
@@ -181,6 +179,9 @@ public final class HammerClientEffects {
             Vec3d impactPos = impactCenter(strike.targetPos);
             double dist = listenerPos.distanceTo(impactPos);
             float distFactor = 1.0F - (float) MathHelper.clamp(dist / PLAYER_EFFECT_RADIUS, 0.0D, 1.0D);
+
+            float beamCharge = beamChargeStrength(strikeTime);
+            maxBeam = Math.max(maxBeam, beamCharge * distFactor);
 
             if (strikeTime >= 0.0F && strikeTime <= STAGE_1_TARGETING_END) {
                 float progress = MathHelper.clamp(strikeTime / (float) Math.max(1, STAGE_1_TARGETING_END), 0.0F, 1.0F);
@@ -228,6 +229,7 @@ public final class HammerClientEffects {
         ringStrength = bestRingStrength;
         ringRadiusNorm = bestRingRadiusNorm;
         glitchStrength = maxGlitch;
+        beamStrength = maxBeam;
 
         tickPostEffect(client, worldTime);
     }
@@ -249,7 +251,7 @@ public final class HammerClientEffects {
         }
 
         if (strikeTick >= STAGE_3_STROKE_START && strikeTick <= STAGE_3_STROKE_END) {
-            tickDrillParticles(client, strike);
+            tickDrillParticles(client, strike, strikeTick);
         }
 
         if (strikeTick >= STAGE_5_WAVE_START && strikeTick <= STAGE_5_WAVE_END) {
@@ -297,23 +299,50 @@ public final class HammerClientEffects {
         }
     }
 
-    private static void tickDrillParticles(MinecraftClient client, ClientStrikeState strike) {
+    private static void tickDrillParticles(MinecraftClient client, ClientStrikeState strike, int strikeTick) {
         if (client.world == null) {
             return;
         }
         Vec3d center = impactCenter(strike.targetPos).add(0.0D, 0.02D, 0.0D);
 
-        for (int i = 0; i < 50; i++) {
-            double x = center.x + (client.world.random.nextDouble() - 0.5D) * 0.35D;
-            double z = center.z + (client.world.random.nextDouble() - 0.5D) * 0.35D;
-            double vx = (client.world.random.nextDouble() - 0.5D) * 0.08D;
-            double vz = (client.world.random.nextDouble() - 0.5D) * 0.08D;
-            client.world.addParticleClient(ParticleTypes.LAVA, x, center.y, z, vx, 0.05D + client.world.random.nextDouble() * 0.08D, vz);
+        float progress = (strikeTick - STAGE_3_STROKE_START) / (float) Math.max(1, (STAGE_3_STROKE_END - STAGE_3_STROKE_START));
+        float intensity = smoothStep(progress);
+
+        int lavaCount = 50 + MathHelper.floor(40 * intensity);
+        double lavaSpread = 0.35D + 0.35D * intensity;
+        double lavaSpeed = 0.08D + 0.05D * intensity;
+        double lavaLift = 0.05D + 0.08D * intensity;
+
+        for (int i = 0; i < lavaCount; i++) {
+            double x = center.x + (client.world.random.nextDouble() - 0.5D) * lavaSpread;
+            double z = center.z + (client.world.random.nextDouble() - 0.5D) * lavaSpread;
+            double vx = (client.world.random.nextDouble() - 0.5D) * lavaSpeed;
+            double vz = (client.world.random.nextDouble() - 0.5D) * lavaSpeed;
+            double vy = lavaLift + client.world.random.nextDouble() * (0.08D + 0.08D * intensity);
+            client.world.addParticleClient(ParticleTypes.LAVA, x, center.y, z, vx, vy, vz);
         }
-        for (int i = 0; i < 100; i++) {
-            double x = center.x + (client.world.random.nextDouble() - 0.5D) * 0.75D;
-            double z = center.z + (client.world.random.nextDouble() - 0.5D) * 0.75D;
-            client.world.addParticleClient(ParticleTypes.LARGE_SMOKE, x, center.y, z, 0.0D, 0.10D + client.world.random.nextDouble() * 0.10D, 0.0D);
+
+        int smokeCount = 100 + MathHelper.floor(140 * intensity);
+        double smokeSpread = 0.75D + 0.55D * intensity;
+        for (int i = 0; i < smokeCount; i++) {
+            double x = center.x + (client.world.random.nextDouble() - 0.5D) * smokeSpread;
+            double z = center.z + (client.world.random.nextDouble() - 0.5D) * smokeSpread;
+            double vy = 0.10D + client.world.random.nextDouble() * (0.12D + 0.10D * intensity);
+            client.world.addParticleClient(ParticleTypes.LARGE_SMOKE, x, center.y, z, 0.0D, vy, 0.0D);
+        }
+
+        int sparkCount = MathHelper.floor(12 * intensity);
+        for (int i = 0; i < sparkCount; i++) {
+            double x = center.x + (client.world.random.nextDouble() - 0.5D) * 0.45D;
+            double z = center.z + (client.world.random.nextDouble() - 0.5D) * 0.45D;
+            double vx = (client.world.random.nextDouble() - 0.5D) * (0.16D + 0.12D * intensity);
+            double vz = (client.world.random.nextDouble() - 0.5D) * (0.16D + 0.12D * intensity);
+            double vy = 0.18D + client.world.random.nextDouble() * 0.18D;
+            client.world.addParticleClient(ParticleTypes.FLAME, x, center.y, z, vx, vy, vz);
+        }
+
+        if (intensity > 0.7F && client.world.random.nextFloat() < intensity * 0.18F) {
+            client.world.addParticleClient(TintedParticleEffect.create(ParticleTypes.FLASH, 0xFFFFFFFF), center.x, center.y + 0.1D, center.z, 0.0D, 0.0D, 0.0D);
         }
     }
 
@@ -353,7 +382,7 @@ public final class HammerClientEffects {
     }
 
     private static void tickPostEffect(MinecraftClient client, long worldTime) {
-        boolean wantsShader = ringStrength > 0.001F || glitchStrength > 0.001F;
+        boolean wantsShader = ringStrength > 0.001F || glitchStrength > 0.001F || beamStrength > 0.001F;
         if (!wantsShader) {
             clearPostEffect(client);
             return;
@@ -392,6 +421,30 @@ public final class HammerClientEffects {
         Vec3d look = player.getRotationVec(1.0F);
         float dot = (float) look.dotProduct(dir);
         return MathHelper.clamp((dot - 0.55F) / 0.35F, 0.0F, 1.0F);
+    }
+
+    private static float smoothStep(float value) {
+        float t = MathHelper.clamp(value, 0.0F, 1.0F);
+        return t * t * (3.0F - 2.0F * t);
+    }
+
+    private static float beamChargeStrength(float strikeTime) {
+        if (strikeTime < STAGE_2_BREACH_START) {
+            return 0.0F;
+        }
+        if (strikeTime < STAGE_3_STROKE_START) {
+            float t = (strikeTime - STAGE_2_BREACH_START) / (float) Math.max(1, STAGE_3_STROKE_START - STAGE_2_BREACH_START);
+            return 0.05F + 0.25F * smoothStep(t);
+        }
+        if (strikeTime <= STAGE_3_STROKE_END) {
+            float t = (strikeTime - STAGE_3_STROKE_START) / (float) Math.max(1, (STAGE_3_STROKE_END - STAGE_3_STROKE_START));
+            return smoothStep(t);
+        }
+        if (strikeTime <= (STAGE_3_STROKE_END + BEAM_TAIL_TICKS)) {
+            float t = 1.0F - ((strikeTime - STAGE_3_STROKE_END) / (float) BEAM_TAIL_TICKS);
+            return MathHelper.clamp(t, 0.0F, 1.0F) * MathHelper.clamp(t, 0.0F, 1.0F);
+        }
+        return 0.0F;
     }
 
     private static void renderHud(DrawContext drawContext, RenderTickCounter tickCounter) {
@@ -448,14 +501,15 @@ public final class HammerClientEffects {
             matrices.push();
             matrices.translate(center.x, center.y, center.z);
 
+            float beamCharge = beamChargeStrength(strikeTime);
             if (strikeTime >= 0.0F && strikeTime <= STAGE_1_TARGETING_END) {
-                renderLaser(queue, matrices, strike.targetPos);
+                renderLaser(queue, matrices, strike.targetPos, worldTime, tickDelta);
             }
             if (strikeTime >= STAGE_2_BREACH_START && strikeTime <= STAGE_2_BREACH_END) {
-                renderMachCone(queue, matrices, strike.targetPos, strikeTime);
+                renderMachCone(queue, matrices, strike.targetPos, strikeTime, beamCharge, worldTime, tickDelta);
             }
-            if (strikeTime >= STAGE_3_STROKE_START && strikeTime <= STAGE_3_STROKE_END) {
-                renderHammerBeam(queue, matrices, strike.targetPos, worldTime, tickDelta);
+            if (strikeTime >= STAGE_3_STROKE_START && strikeTime <= (STAGE_3_STROKE_END + BEAM_TAIL_TICKS)) {
+                renderHammerBeam(queue, matrices, strike.targetPos, worldTime, tickDelta, strikeTime, beamCharge, strike.seed);
             }
             if (strikeTime >= STAGE_5_WAVE_START && strikeTime <= STAGE_5_WAVE_END) {
                 renderPressureWaveOutline(queue, matrices, strikeTime);
@@ -465,24 +519,35 @@ public final class HammerClientEffects {
         }
     }
 
-    private static void renderLaser(OrderedRenderCommandQueue queue, MatrixStack matrices, BlockPos targetPos) {
+    private static void renderLaser(OrderedRenderCommandQueue queue, MatrixStack matrices, BlockPos targetPos, long worldTime, float tickDelta) {
         int top = Math.max(targetPos.getY() + 1, LASER_TOP_Y);
         float height = top - (targetPos.getY() + 0.02F);
         if (height <= 0.5F) {
             return;
         }
 
-        submitCrossBeam(queue, matrices, WHITE_TEXTURE, 0.05F, height, LASER_COLOR_ARGB, LightmapTextureManager.MAX_LIGHT_COORDINATE);
+        float time = (worldTime + tickDelta) / 20.0F;
+        float pulse = 0.85F + 0.15F * MathHelper.sin(time * 2.4F);
+        float width = 0.04F + 0.02F * pulse;
+
+        int coreAlpha = MathHelper.clamp(MathHelper.floor(170 + 70 * pulse), 0, 255);
+        int glowAlpha = MathHelper.clamp(MathHelper.floor(70 + 50 * pulse), 0, 255);
+
+        int coreColor = (coreAlpha << 24) | (LASER_COLOR_ARGB & 0x00FFFFFF);
+        submitCrossBeam(queue, matrices, WHITE_TEXTURE, width, height, coreColor, LightmapTextureManager.MAX_LIGHT_COORDINATE);
+        submitCrossBeam(queue, matrices, WHITE_TEXTURE, width * 3.2F, height, argb(glowAlpha, 255, 120, 120), LightmapTextureManager.MAX_LIGHT_COORDINATE);
     }
 
-    private static void renderMachCone(OrderedRenderCommandQueue queue, MatrixStack matrices, BlockPos targetPos, float strikeTime) {
+    private static void renderMachCone(OrderedRenderCommandQueue queue, MatrixStack matrices, BlockPos targetPos, float strikeTime, float beamCharge, long worldTime, float tickDelta) {
         float localTick = strikeTime - STAGE_2_BREACH_START;
         float tipWorldY = CONE_TIP_START_Y - localTick * CONE_DESCENT_PER_TICK;
         float groundWorldY = targetPos.getY() + 0.02F;
         float tipY = Math.max(0.0F, tipWorldY - groundWorldY);
         float baseY = tipY + CONE_HEIGHT;
 
-        int alpha = 120;
+        float time = (worldTime + tickDelta) / 20.0F;
+        float flicker = 0.6F + 0.4F * MathHelper.sin(time * 5.6F + strikeTime * 0.7F);
+        int alpha = MathHelper.clamp(MathHelper.floor(120 + 60 * beamCharge), 0, 255);
         int color = (alpha << 24) | 0xFFFFFF;
 
         int segments = 48;
@@ -495,9 +560,34 @@ public final class HammerClientEffects {
             double z = Math.sin(theta) * CONE_RADIUS;
             HammerRenderUtil.submitLine(queue, matrices, RenderLayers.linesTranslucent(), tip, new Vec3d(x, baseY, z), color, 1.6F);
         }
+
+        if (beamCharge > 0.001F) {
+            float innerRadius = CONE_RADIUS * (0.35F + 0.35F * beamCharge);
+            int innerAlpha = MathHelper.clamp(MathHelper.floor(80 + 140 * beamCharge * flicker), 0, 255);
+            int innerColor = argb(innerAlpha, 255, 190, 190);
+
+            HammerRenderUtil.submitCircle(queue, matrices, RenderLayers.linesTranslucent(), new Vec3d(0.0D, baseY, 0.0D), innerRadius, innerColor, 2.0F, 32);
+
+            int innerSegments = 24;
+            for (int i = 1; i <= innerSegments; i++) {
+                double theta = (Math.PI * 2.0D) * (i / (double) innerSegments);
+                double x = Math.cos(theta) * innerRadius;
+                double z = Math.sin(theta) * innerRadius;
+                HammerRenderUtil.submitLine(queue, matrices, RenderLayers.linesTranslucent(), tip, new Vec3d(x, baseY, z), innerColor, 1.2F + 0.6F * beamCharge);
+            }
+        }
     }
 
-    private static void renderHammerBeam(OrderedRenderCommandQueue queue, MatrixStack matrices, BlockPos targetPos, long worldTime, float tickDelta) {
+    private static void renderHammerBeam(
+            OrderedRenderCommandQueue queue,
+            MatrixStack matrices,
+            BlockPos targetPos,
+            long worldTime,
+            float tickDelta,
+            float strikeTime,
+            float beamCharge,
+            int seed
+    ) {
         int top = Math.max(targetPos.getY() + 1, LASER_TOP_Y);
         float height = top - (targetPos.getY() + 0.02F);
         if (height <= 0.5F) {
@@ -505,11 +595,50 @@ public final class HammerClientEffects {
         }
 
         float time = (worldTime + tickDelta) / 20.0F;
-        float pulse = 1.0F + 0.18F * MathHelper.sin(time * 2.3F);
+        float strength = MathHelper.clamp(beamCharge, 0.0F, 1.0F);
+        float pulse = 1.0F + (0.18F + 0.22F * strength) * MathHelper.sin(time * (2.3F + 1.7F * strength));
+        float flicker = 0.9F + 0.1F * MathHelper.sin(time * (9.0F + 8.0F * strength) + (seed * 0.017F) + strikeTime * 0.4F);
 
-        submitCylinder(queue, matrices, WHITE_TEXTURE, 1.0F, height, argb(255, 255, 255, 255), 0.0F, 0.0F, LightmapTextureManager.MAX_LIGHT_COORDINATE);
-        submitCylinder(queue, matrices, NOISE_TEXTURE, 3.0F, height, argb(128, 0, 255, 255), time * 0.25F, time * 0.6F, LightmapTextureManager.MAX_LIGHT_COORDINATE);
-        submitCylinder(queue, matrices, WHITE_TEXTURE, 6.0F * pulse, height, argb(51, 110, 120, 255), 0.0F, 0.0F, LightmapTextureManager.MAX_LIGHT_COORDINATE);
+        float coreRadius = 0.9F + 0.7F * strength;
+        float midRadius = 2.6F + 3.2F * strength;
+        float outerRadius = (6.0F + 6.0F * strength) * pulse;
+        float hazeRadius = (9.0F + 10.0F * strength) * (0.75F + 0.25F * pulse);
+
+        int coreAlpha = MathHelper.clamp(MathHelper.floor(220 + 35 * strength * flicker), 0, 255);
+        int midAlpha = MathHelper.clamp(MathHelper.floor(110 + 110 * strength * flicker), 0, 255);
+        int outerAlpha = MathHelper.clamp(MathHelper.floor(40 + 90 * strength), 0, 255);
+        int hazeAlpha = MathHelper.clamp(MathHelper.floor(20 + 60 * strength), 0, 255);
+
+        float noiseScrollU = time * (0.25F + 0.65F * strength);
+        float noiseScrollV = time * (0.55F + 1.1F * strength);
+
+        float crossWidth = 0.04F + 0.06F * strength;
+        submitCrossBeam(queue, matrices, WHITE_TEXTURE, crossWidth, height, argb(coreAlpha, 255, 255, 255), LightmapTextureManager.MAX_LIGHT_COORDINATE);
+
+        submitCylinder(queue, matrices, WHITE_TEXTURE, coreRadius, height, argb(coreAlpha, 255, 255, 255), 0.0F, 0.0F, LightmapTextureManager.MAX_LIGHT_COORDINATE);
+        submitCylinder(queue, matrices, NOISE_TEXTURE, midRadius, height, argb(midAlpha, 40, 240, 255), noiseScrollU, noiseScrollV, LightmapTextureManager.MAX_LIGHT_COORDINATE);
+        submitCylinder(queue, matrices, WHITE_TEXTURE, outerRadius, height, argb(outerAlpha, 100, 170, 255), 0.0F, 0.0F, LightmapTextureManager.MAX_LIGHT_COORDINATE);
+        submitCylinder(queue, matrices, WHITE_TEXTURE, hazeRadius, height, argb(hazeAlpha, 160, 200, 255), 0.0F, 0.0F, LightmapTextureManager.MAX_LIGHT_COORDINATE);
+
+        renderBeamChargeDisk(queue, matrices, strength, time, seed);
+    }
+
+    private static void renderBeamChargeDisk(OrderedRenderCommandQueue queue, MatrixStack matrices, float strength, float time, int seed) {
+        if (strength <= 0.01F) {
+            return;
+        }
+
+        float pulse = 0.9F + 0.1F * MathHelper.sin(time * 6.0F + seed * 0.02F);
+        float radius = 2.5F + 7.5F * strength;
+        float outerRadius = radius * (1.0F + 0.15F * pulse);
+        float innerRadius = radius * (0.35F + 0.15F * pulse);
+
+        int outerAlpha = MathHelper.clamp(MathHelper.floor(50 + 140 * strength), 0, 255);
+        int innerAlpha = MathHelper.clamp(MathHelper.floor(90 + 140 * strength * pulse), 0, 255);
+
+        Vec3d center = new Vec3d(0.0D, 0.04D, 0.0D);
+        HammerRenderUtil.submitCircle(queue, matrices, RenderLayers.linesTranslucent(), center, outerRadius, argb(outerAlpha, 255, 170, 170), 2.2F + 1.2F * strength, 72);
+        HammerRenderUtil.submitCircle(queue, matrices, RenderLayers.linesTranslucent(), center, innerRadius, argb(innerAlpha, 255, 235, 235), 1.6F + 0.9F * strength, 36);
     }
 
     private static void renderPressureWaveOutline(OrderedRenderCommandQueue queue, MatrixStack matrices, float strikeTime) {
