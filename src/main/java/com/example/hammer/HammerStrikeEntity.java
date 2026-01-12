@@ -295,7 +295,15 @@ public class HammerStrikeEntity extends Entity {
         };
 
         long seed = (((long) getSeed()) << 32) ^ center.asLong() ^ world.getTime();
-        ExplosionCarver.schedule(world, explosion, seed, canAffectBlock, false, energyMultiplier);
+        ExplosionCarver.schedule(
+                world,
+                explosion,
+                seed,
+                canAffectBlock,
+                false,
+                energyMultiplier,
+                () -> HammerNetworking.sendCraterComplete(world, center, getId(), world.getTime())
+        );
     }
 
     private void enterStage(ServerWorld world, HammerStage stage) {

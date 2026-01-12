@@ -3,6 +3,7 @@ package com.example.hammer.client;
 import com.example.ExampleMod;
 import com.example.hammer.HammerStage;
 import com.example.hammer.client.render.HammerRenderUtil;
+import com.example.hammer.network.S2CHammerCraterPacket;
 import com.example.hammer.network.S2CHammerPacket;
 import com.example.mixin.client.GameRendererAccessor;
 import net.fabricmc.api.EnvType;
@@ -58,9 +59,20 @@ public final class HammerClientEffects {
 
     private static final int LASER_TOP_Y = 320;
     private static final int CONE_TIP_START_Y = 300;
-    private static final float CONE_DESCENT_PER_TICK = 25.0F;
-    private static final float CONE_RADIUS = 10.0F;
-    private static final float CONE_HEIGHT = 100.0F;
+    private static final float STAGE_CYLINDER_BASE_RADIUS = 1.0F;
+    private static final float STAGE_CYLINDER_RADIUS_STEP = 1.75F;
+    private static final float STAGE_CYLINDER_PULSE = 0.03F;
+    private static final int CRATER_DEPTH_BLOCKS = 128;
+    private static final float STAGE_CYLINDER_ACCELERATION = 1.5F;
+    private static final int STAGE_CYLINDER_PRE_TICKS = 12;
+    private static final float STAGE_CYLINDER_POST_OFFSET = 0.08F;
+    private static final int STAGE_CYLINDER_EXTENSION_END_TICK = STAGE_6_AFTERMATH_END;
+    private static final int[] STAGE_CYLINDER_STARTS = {
+            STAGE_2_BREACH_START,
+            STAGE_3_STROKE_START,
+            STAGE_4_ERUPTION_START,
+            STAGE_5_WAVE_START
+    };
 
     private static final float PLAYER_EFFECT_RADIUS = 100.0F;
     private static final float PRESSURE_WAVE_RADIUS = 80.0F;
@@ -83,6 +95,7 @@ public final class HammerClientEffects {
 
     public static void initialize() {
         ClientPlayNetworking.registerGlobalReceiver(S2CHammerPacket.ID, HammerClientEffects::onStagePacket);
+        ClientPlayNetworking.registerGlobalReceiver(S2CHammerCraterPacket.ID, HammerClientEffects::onCraterCompletePacket);
 
         ClientTickEvents.END_CLIENT_TICK.register(HammerClientEffects::tickClient);
         HudRenderCallback.EVENT.register(HammerClientEffects::renderHud);
@@ -134,6 +147,21 @@ public final class HammerClientEffects {
         state.stage = payload.stage();
         state.stageStrikeTick = payload.stageStrikeTick();
         state.stageStartWorldTime = payload.stageStartWorldTime();
+        if (state.strikeStartWorldTime == Long.MIN_VALUE) {
+            state.strikeStartWorldTime = payload.stageStartWorldTime() - payload.stageStrikeTick();
+        }
+        state.lastSeenWorldTime = client.world.getTime();
+    }
+
+    private static void onCraterCompletePacket(S2CHammerCraterPacket payload, net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.Context context) {
+        MinecraftClient client = context.client();
+        if (client.world == null) {
+            return;
+        }
+
+        ClientStrikeState state = STRIKES.computeIfAbsent(payload.strikeEntityId(), ignored -> new ClientStrikeState());
+        state.targetPos = payload.targetPos();
+        state.craterCompleteWorldTime = payload.completionWorldTime();
         state.lastSeenWorldTime = client.world.getTime();
     }
 
@@ -180,7 +208,7 @@ public final class HammerClientEffects {
             double dist = listenerPos.distanceTo(impactPos);
             float distFactor = 1.0F - (float) MathHelper.clamp(dist / PLAYER_EFFECT_RADIUS, 0.0D, 1.0D);
 
-            float beamCharge = beamChargeStrength(strikeTime);
+            float beamCharge = beamChargeStrength(strikeTime, beamEndTick(strike));
             maxBeam = Math.max(maxBeam, beamCharge * distFactor);
 
             if (strikeTime >= 0.0F && strikeTime <= STAGE_1_TARGETING_END) {
@@ -404,6 +432,9 @@ public final class HammerClientEffects {
     }
 
     private static float strikeTime(long worldTime, ClientStrikeState state, float tickDelta) {
+        if (state.strikeStartWorldTime != Long.MIN_VALUE) {
+            return (float) (worldTime - state.strikeStartWorldTime) + tickDelta;
+        }
         return (float) (worldTime - state.stageStartWorldTime) + state.stageStrikeTick + tickDelta;
     }
 
@@ -428,23 +459,58 @@ public final class HammerClientEffects {
         return t * t * (3.0F - 2.0F * t);
     }
 
-    private static float beamChargeStrength(float strikeTime) {
+    private static float beamChargeStrength(float strikeTime, float endTick) {
         if (strikeTime < STAGE_2_BREACH_START) {
             return 0.0F;
         }
         if (strikeTime < STAGE_3_STROKE_START) {
             float t = (strikeTime - STAGE_2_BREACH_START) / (float) Math.max(1, STAGE_3_STROKE_START - STAGE_2_BREACH_START);
-            return 0.05F + 0.25F * smoothStep(t);
+            return 0.2F + 0.8F * smoothStep(t);
         }
-        if (strikeTime <= STAGE_3_STROKE_END) {
-            float t = (strikeTime - STAGE_3_STROKE_START) / (float) Math.max(1, (STAGE_3_STROKE_END - STAGE_3_STROKE_START));
-            return smoothStep(t);
+        if (strikeTime <= endTick) {
+            return 1.0F;
         }
-        if (strikeTime <= (STAGE_3_STROKE_END + BEAM_TAIL_TICKS)) {
-            float t = 1.0F - ((strikeTime - STAGE_3_STROKE_END) / (float) BEAM_TAIL_TICKS);
-            return MathHelper.clamp(t, 0.0F, 1.0F) * MathHelper.clamp(t, 0.0F, 1.0F);
+        if (strikeTime <= (endTick + BEAM_TAIL_TICKS)) {
+            float t = 1.0F - ((strikeTime - endTick) / (float) BEAM_TAIL_TICKS);
+            float clamped = MathHelper.clamp(t, 0.0F, 1.0F);
+            return clamped * clamped;
         }
         return 0.0F;
+    }
+
+    private static float stageBeamLength(float strikeTime, int stageStart, float heightAbove, float depthBelow, float extensionEndTick) {
+        float preStart = Math.max(0.0F, stageStart - STAGE_CYLINDER_PRE_TICKS);
+        float aboveProgress;
+        if (strikeTime <= preStart) {
+            aboveProgress = 0.0F;
+        } else if (strikeTime < stageStart) {
+            float preDuration = Math.max(1.0F, stageStart - preStart);
+            float t = MathHelper.clamp((strikeTime - preStart) / preDuration, 0.0F, 1.0F);
+            aboveProgress = (float) Math.pow(t, STAGE_CYLINDER_ACCELERATION);
+        } else {
+            aboveProgress = 1.0F;
+        }
+
+        float belowProgress;
+        if (strikeTime < stageStart) {
+            belowProgress = 0.0F;
+        } else {
+            float duration = Math.max(1.0F, extensionEndTick - stageStart);
+            float t = MathHelper.clamp((strikeTime - stageStart) / duration, 0.0F, 1.0F);
+            float offset = STAGE_CYLINDER_POST_OFFSET;
+            float denom = (float) Math.pow(1.0F + offset, STAGE_CYLINDER_ACCELERATION) - (float) Math.pow(offset, STAGE_CYLINDER_ACCELERATION);
+            float eased = (float) Math.pow(t + offset, STAGE_CYLINDER_ACCELERATION) - (float) Math.pow(offset, STAGE_CYLINDER_ACCELERATION);
+            belowProgress = denom <= 0.0F ? t : MathHelper.clamp(eased / denom, 0.0F, 1.0F);
+        }
+
+        return (heightAbove * aboveProgress) + (depthBelow * belowProgress);
+    }
+
+    private static float beamEndTick(ClientStrikeState strike) {
+        if (strike.craterCompleteWorldTime == Long.MIN_VALUE || strike.strikeStartWorldTime == Long.MIN_VALUE) {
+            return Float.POSITIVE_INFINITY;
+        }
+        return Math.max(0.0F, (float) (strike.craterCompleteWorldTime - strike.strikeStartWorldTime));
     }
 
     private static void renderHud(DrawContext drawContext, RenderTickCounter tickCounter) {
@@ -501,15 +567,13 @@ public final class HammerClientEffects {
             matrices.push();
             matrices.translate(center.x, center.y, center.z);
 
-            float beamCharge = beamChargeStrength(strikeTime);
+            float endTick = beamEndTick(strike);
+            float beamCharge = beamChargeStrength(strikeTime, endTick);
             if (strikeTime >= 0.0F && strikeTime <= STAGE_1_TARGETING_END) {
                 renderLaser(queue, matrices, strike.targetPos, worldTime, tickDelta);
             }
-            if (strikeTime >= STAGE_2_BREACH_START && strikeTime <= STAGE_2_BREACH_END) {
-                renderMachCone(queue, matrices, strike.targetPos, strikeTime, beamCharge, worldTime, tickDelta);
-            }
-            if (strikeTime >= STAGE_3_STROKE_START && strikeTime <= (STAGE_3_STROKE_END + BEAM_TAIL_TICKS)) {
-                renderHammerBeam(queue, matrices, strike.targetPos, worldTime, tickDelta, strikeTime, beamCharge, strike.seed);
+            if (strikeTime >= STAGE_2_BREACH_START && strikeTime <= (endTick + BEAM_TAIL_TICKS)) {
+                renderHammerBeam(queue, matrices, strike.targetPos, worldTime, tickDelta, strikeTime, beamCharge, endTick, strike.seed);
             }
             if (strikeTime >= STAGE_5_WAVE_START && strikeTime <= STAGE_5_WAVE_END) {
                 renderPressureWaveOutline(queue, matrices, strikeTime);
@@ -538,46 +602,6 @@ public final class HammerClientEffects {
         submitCrossBeam(queue, matrices, WHITE_TEXTURE, width * 3.2F, height, argb(glowAlpha, 255, 120, 120), LightmapTextureManager.MAX_LIGHT_COORDINATE);
     }
 
-    private static void renderMachCone(OrderedRenderCommandQueue queue, MatrixStack matrices, BlockPos targetPos, float strikeTime, float beamCharge, long worldTime, float tickDelta) {
-        float localTick = strikeTime - STAGE_2_BREACH_START;
-        float tipWorldY = CONE_TIP_START_Y - localTick * CONE_DESCENT_PER_TICK;
-        float groundWorldY = targetPos.getY() + 0.02F;
-        float tipY = Math.max(0.0F, tipWorldY - groundWorldY);
-        float baseY = tipY + CONE_HEIGHT;
-
-        float time = (worldTime + tickDelta) / 20.0F;
-        float flicker = 0.6F + 0.4F * MathHelper.sin(time * 5.6F + strikeTime * 0.7F);
-        int alpha = MathHelper.clamp(MathHelper.floor(120 + 60 * beamCharge), 0, 255);
-        int color = (alpha << 24) | 0xFFFFFF;
-
-        int segments = 48;
-        HammerRenderUtil.submitCircle(queue, matrices, RenderLayers.linesTranslucent(), new Vec3d(0.0D, baseY, 0.0D), CONE_RADIUS, color, 2.5F, segments);
-
-        Vec3d tip = new Vec3d(0.0D, tipY, 0.0D);
-        for (int i = 1; i <= segments; i++) {
-            double theta = (Math.PI * 2.0D) * (i / (double) segments);
-            double x = Math.cos(theta) * CONE_RADIUS;
-            double z = Math.sin(theta) * CONE_RADIUS;
-            HammerRenderUtil.submitLine(queue, matrices, RenderLayers.linesTranslucent(), tip, new Vec3d(x, baseY, z), color, 1.6F);
-        }
-
-        if (beamCharge > 0.001F) {
-            float innerRadius = CONE_RADIUS * (0.35F + 0.35F * beamCharge);
-            int innerAlpha = MathHelper.clamp(MathHelper.floor(80 + 140 * beamCharge * flicker), 0, 255);
-            int innerColor = argb(innerAlpha, 255, 190, 190);
-
-            HammerRenderUtil.submitCircle(queue, matrices, RenderLayers.linesTranslucent(), new Vec3d(0.0D, baseY, 0.0D), innerRadius, innerColor, 2.0F, 32);
-
-            int innerSegments = 24;
-            for (int i = 1; i <= innerSegments; i++) {
-                double theta = (Math.PI * 2.0D) * (i / (double) innerSegments);
-                double x = Math.cos(theta) * innerRadius;
-                double z = Math.sin(theta) * innerRadius;
-                HammerRenderUtil.submitLine(queue, matrices, RenderLayers.linesTranslucent(), tip, new Vec3d(x, baseY, z), innerColor, 1.2F + 0.6F * beamCharge);
-            }
-        }
-    }
-
     private static void renderHammerBeam(
             OrderedRenderCommandQueue queue,
             MatrixStack matrices,
@@ -586,39 +610,57 @@ public final class HammerClientEffects {
             float tickDelta,
             float strikeTime,
             float beamCharge,
+            float endTick,
             int seed
     ) {
         int top = Math.max(targetPos.getY() + 1, LASER_TOP_Y);
-        float height = top - (targetPos.getY() + 0.02F);
-        if (height <= 0.5F) {
+        float heightAbove = top - (targetPos.getY() + 0.02F);
+        if (heightAbove <= 0.5F) {
             return;
         }
 
+        MinecraftClient client = MinecraftClient.getInstance();
+        int bottomY = targetPos.getY() - CRATER_DEPTH_BLOCKS;
+        if (client.world != null) {
+            bottomY = Math.max(client.world.getBottomY(), bottomY);
+        }
+
+        float depthBelow = Math.max(0.0F, (targetPos.getY() + 0.02F) - bottomY);
+
         float time = (worldTime + tickDelta) / 20.0F;
         float strength = MathHelper.clamp(beamCharge, 0.0F, 1.0F);
-        float pulse = 1.0F + (0.18F + 0.22F * strength) * MathHelper.sin(time * (2.3F + 1.7F * strength));
-        float flicker = 0.9F + 0.1F * MathHelper.sin(time * (9.0F + 8.0F * strength) + (seed * 0.017F) + strikeTime * 0.4F);
+        float flicker = 0.9F + 0.1F * MathHelper.sin(time * (8.0F + 4.0F * strength) + (seed * 0.017F) + strikeTime * 0.35F);
 
-        float coreRadius = 0.9F + 0.7F * strength;
-        float midRadius = 2.6F + 3.2F * strength;
-        float outerRadius = (6.0F + 6.0F * strength) * pulse;
-        float hazeRadius = (9.0F + 10.0F * strength) * (0.75F + 0.25F * pulse);
+        float coreRadius = 0.55F;
+        int coreAlpha = MathHelper.clamp(MathHelper.floor(210 + 45 * strength * flicker), 0, 255);
 
-        int coreAlpha = MathHelper.clamp(MathHelper.floor(220 + 35 * strength * flicker), 0, 255);
-        int midAlpha = MathHelper.clamp(MathHelper.floor(110 + 110 * strength * flicker), 0, 255);
-        int outerAlpha = MathHelper.clamp(MathHelper.floor(40 + 90 * strength), 0, 255);
-        int hazeAlpha = MathHelper.clamp(MathHelper.floor(20 + 60 * strength), 0, 255);
+        for (int i = 0; i < STAGE_CYLINDER_STARTS.length; i++) {
+            float extensionEndTick = Float.isInfinite(endTick) ? STAGE_CYLINDER_EXTENSION_END_TICK : endTick;
+            float beamLength = stageBeamLength(strikeTime, STAGE_CYLINDER_STARTS[i], heightAbove, depthBelow, extensionEndTick);
+            if (beamLength <= 0.5F) {
+                continue;
+            }
 
-        float noiseScrollU = time * (0.25F + 0.65F * strength);
-        float noiseScrollV = time * (0.55F + 1.1F * strength);
+            float yOffset = heightAbove - beamLength;
+            matrices.push();
+            matrices.translate(0.0D, yOffset, 0.0D);
 
-        float crossWidth = 0.04F + 0.06F * strength;
-        submitCrossBeam(queue, matrices, WHITE_TEXTURE, crossWidth, height, argb(coreAlpha, 255, 255, 255), LightmapTextureManager.MAX_LIGHT_COORDINATE);
+            float pulse = 1.0F + STAGE_CYLINDER_PULSE * MathHelper.sin(time * (2.1F + 0.4F * i));
+            float radius = (STAGE_CYLINDER_BASE_RADIUS + (i * STAGE_CYLINDER_RADIUS_STEP)) * pulse;
 
-        submitCylinder(queue, matrices, WHITE_TEXTURE, coreRadius, height, argb(coreAlpha, 255, 255, 255), 0.0F, 0.0F, LightmapTextureManager.MAX_LIGHT_COORDINATE);
-        submitCylinder(queue, matrices, NOISE_TEXTURE, midRadius, height, argb(midAlpha, 40, 240, 255), noiseScrollU, noiseScrollV, LightmapTextureManager.MAX_LIGHT_COORDINATE);
-        submitCylinder(queue, matrices, WHITE_TEXTURE, outerRadius, height, argb(outerAlpha, 100, 170, 255), 0.0F, 0.0F, LightmapTextureManager.MAX_LIGHT_COORDINATE);
-        submitCylinder(queue, matrices, WHITE_TEXTURE, hazeRadius, height, argb(hazeAlpha, 160, 200, 255), 0.0F, 0.0F, LightmapTextureManager.MAX_LIGHT_COORDINATE);
+            int alpha = MathHelper.clamp(MathHelper.floor((70 + 130 * strength) * (1.0F - (i * 0.12F))), 0, 255);
+            float scroll = time * (0.25F + 0.12F * i) + (seed * 0.007F);
+
+            if (i == 0) {
+                float crossWidth = 0.05F;
+                submitCrossBeam(queue, matrices, WHITE_TEXTURE, crossWidth, beamLength, argb(coreAlpha, 255, 255, 255), LightmapTextureManager.MAX_LIGHT_COORDINATE);
+                submitCylinder(queue, matrices, WHITE_TEXTURE, coreRadius, beamLength, argb(coreAlpha, 255, 255, 255), 0.0F, 0.0F, LightmapTextureManager.MAX_LIGHT_COORDINATE);
+            }
+
+            submitCylinder(queue, matrices, NOISE_TEXTURE, radius, beamLength, argb(alpha, 120, 210, 255), scroll, 0.0F, LightmapTextureManager.MAX_LIGHT_COORDINATE);
+
+            matrices.pop();
+        }
 
         renderBeamChargeDisk(queue, matrices, strength, time, seed);
     }
@@ -761,7 +803,9 @@ public final class HammerClientEffects {
         HammerStage stage = HammerStage.TARGETING;
         int stageStrikeTick;
         long stageStartWorldTime;
+        long strikeStartWorldTime = Long.MIN_VALUE;
         long lastSeenWorldTime;
+        long craterCompleteWorldTime = Long.MIN_VALUE;
 
         int lastProcessedStrikeTick = Integer.MIN_VALUE;
         int lastBreachSoundTick = Integer.MIN_VALUE;

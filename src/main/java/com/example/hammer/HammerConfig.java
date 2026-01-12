@@ -13,7 +13,7 @@ import org.jetbrains.annotations.Nullable;
 public final class HammerConfig {
     private static final String PREFIX = ExampleMod.MOD_ID + ".hammer.";
 
-    private static final int COOLDOWN_TICKS = readInt("cooldownTicks", 20 * 180, 20 * 10, 20 * 60 * 60);
+    private static final int COOLDOWN_TICKS = HammerStrikeTimeline.STAGE_6_AFTERMATH_END + 1;
     private static final int MIN_CHARGE_TICKS = readInt("minChargeTicks", 10, 0, 20 * 10);
     private static final int RANGE_BLOCKS = readInt("rangeBlocks", 256, 8, 512);
 

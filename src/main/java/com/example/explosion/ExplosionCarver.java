@@ -10,6 +10,7 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.explosion.ExplosionImpl;
 
 import java.util.function.BiPredicate;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -69,7 +70,7 @@ public final class ExplosionCarver {
             BiPredicate<BlockPos, BlockState> canAffectBlock,
             boolean dropsEnabled
     ) {
-        schedule(world, explosion, seed, canAffectBlock, dropsEnabled, 1.0F);
+        schedule(world, explosion, seed, canAffectBlock, dropsEnabled, 1.0F, null);
     }
 
     public static void schedule(
@@ -80,12 +81,24 @@ public final class ExplosionCarver {
             boolean dropsEnabled,
             float initialEnergyMultiplier
     ) {
+        schedule(world, explosion, seed, canAffectBlock, dropsEnabled, initialEnergyMultiplier, null);
+    }
+
+    public static void schedule(
+            ServerWorld world,
+            ExplosionImpl explosion,
+            long seed,
+            BiPredicate<BlockPos, BlockState> canAffectBlock,
+            boolean dropsEnabled,
+            float initialEnergyMultiplier,
+            @Nullable Runnable onFinished
+    ) {
         MinecraftServer server = world.getServer();
         if (server == null) {
             return;
         }
 
-        ExplosionCarverTask task = new ExplosionCarverTask(explosion, seed, canAffectBlock, dropsEnabled, initialEnergyMultiplier);
+        ExplosionCarverTask task = new ExplosionCarverTask(explosion, seed, canAffectBlock, dropsEnabled, initialEnergyMultiplier, onFinished);
         ExplosionCarverProfiling.onTaskScheduled(world, explosion, seed, task);
 
         TASKS_BY_SERVER
@@ -128,6 +141,7 @@ public final class ExplosionCarver {
 
             if (progress.done()) {
                 ExplosionCarverProfiling.onTaskFinished(task);
+                task.onFinished();
             } else {
                 tasks.addLast(task);
             }

@@ -78,6 +78,7 @@ public final class ExplosionCarverTask {
     private final int dropInnerRadiusSquared;
     private final BiPredicate<BlockPos, BlockState> canAffectBlock;
     private final float initialEnergyMultiplier;
+    private final @org.jetbrains.annotations.Nullable Runnable onFinished;
 
     // Per-task resistance cache keyed by state raw id (jitter is applied after caching).
     private final Int2FloatOpenHashMap baseResistanceCostByStateId = new Int2FloatOpenHashMap();
@@ -105,7 +106,7 @@ public final class ExplosionCarverTask {
     }
 
     public ExplosionCarverTask(ExplosionImpl explosion, long seed) {
-        this(explosion, seed, null, true);
+        this(explosion, seed, null, true, 1.0F, null);
     }
 
     public ExplosionCarverTask(
@@ -114,7 +115,7 @@ public final class ExplosionCarverTask {
             BiPredicate<BlockPos, BlockState> canAffectBlock,
             boolean dropsEnabled
     ) {
-        this(explosion, seed, canAffectBlock, dropsEnabled, 1.0F);
+        this(explosion, seed, canAffectBlock, dropsEnabled, 1.0F, null);
     }
 
     public ExplosionCarverTask(
@@ -122,7 +123,8 @@ public final class ExplosionCarverTask {
             long seed,
             BiPredicate<BlockPos, BlockState> canAffectBlock,
             boolean dropsEnabled,
-            float initialEnergyMultiplier
+            float initialEnergyMultiplier,
+            @org.jetbrains.annotations.Nullable Runnable onFinished
     ) {
         this.explosion = explosion;
         this.seed = seed;
@@ -130,6 +132,7 @@ public final class ExplosionCarverTask {
         this.behavior = ((ExplosionImplAccessor) explosion).modid$getBehavior();
         this.canAffectBlock = canAffectBlock;
         this.initialEnergyMultiplier = MathHelper.clamp(initialEnergyMultiplier, 0.0F, 1_000.0F);
+        this.onFinished = onFinished;
 
         Vec3d pos = explosion.getPosition();
         this.origin = BlockPos.ofFloored(pos);
@@ -198,6 +201,12 @@ public final class ExplosionCarverTask {
         }
 
         return new Progress(nodesExpanded, blocksBroken, dropBlocks, bfsFinished && blocksToBreak.isEmpty());
+    }
+
+    void onFinished() {
+        if (onFinished != null) {
+            onFinished.run();
+        }
     }
 
     private int expandWavefront(int maxNodeExpansions) {
