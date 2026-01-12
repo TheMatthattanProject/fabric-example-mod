@@ -15,7 +15,7 @@ public final class HammerConfig {
 
     private static final int COOLDOWN_TICKS = HammerStrikeTimeline.STAGE_6_AFTERMATH_END + 1;
     private static final int MIN_CHARGE_TICKS = readInt("minChargeTicks", 10, 0, 20 * 10);
-    private static final int RANGE_BLOCKS = readInt("rangeBlocks", 256, 8, 512);
+    private static final int RANGE_BLOCKS = readInt("rangeBlocks", 2048, 8, 2048);
 
     private static final boolean BLOCK_DAMAGE = readBoolean("blockDamage", true);
     private static final BlockDamageMode BLOCK_DAMAGE_MODE = readBlockDamageMode("blockDamageMode", BlockDamageMode.CRUST);

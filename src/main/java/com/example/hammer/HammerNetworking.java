@@ -10,7 +10,7 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 
 public final class HammerNetworking {
-    private static final double STAGE_SYNC_RADIUS = 256.0D;
+    private static final double STAGE_SYNC_RADIUS = 2048.0D;
 
     private HammerNetworking() {
     }

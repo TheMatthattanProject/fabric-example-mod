@@ -30,6 +30,7 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.Heightmap;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldEvents;
+import net.minecraft.world.chunk.ChunkStatus;
 import net.minecraft.world.explosion.Explosion;
 import net.minecraft.world.explosion.ExplosionImpl;
 import org.jetbrains.annotations.Nullable;
@@ -74,6 +75,10 @@ public class HammerStrikeEntity extends Entity {
     private final ObjectArrayList<BlockPos> craterColumns = new ObjectArrayList<>();
     private float lastWaveRadius;
 
+    private int forcedChunkX;
+    private int forcedChunkZ;
+    private int forcedChunkRadius = -1;
+
     private int strikeTicks;
     private boolean craterCarveScheduled;
 
@@ -106,7 +111,10 @@ public class HammerStrikeEntity extends Entity {
         strike.setOwner(owner);
         strike.setPreview(preview);
         strike.setSeed(strike.random.nextInt());
-        world.spawnEntity(strike);
+        strike.forceLoadAtSpawn(world, target);
+        if (!world.spawnEntity(strike)) {
+            strike.releaseForceLoadedChunks(world);
+        }
         return strike;
     }
 
@@ -188,6 +196,7 @@ public class HammerStrikeEntity extends Entity {
         }
 
         ServerWorld world = (ServerWorld) getEntityWorld();
+        ensureForceLoadedChunks(world);
         if (!isPreview() && waveTargetRadius > waveFoliageClearedRadius && (strikeTicks % WAVE_SWEEP_INTERVAL_TICKS) == 0) {
             tickWaveFoliageSweep(world);
         }
@@ -230,12 +239,60 @@ public class HammerStrikeEntity extends Entity {
             if (!isPreview() && hasPendingFoliageWork()) {
                 // Keep the entity alive until the foliage sweep catches up, so the full wave radius is processed.
             } else {
+                releaseForceLoadedChunks(world);
                 discard();
                 return;
             }
         }
 
         strikeTicks++;
+    }
+
+    private void ensureForceLoadedChunks(ServerWorld world) {
+        BlockPos target = getTargetPos();
+        int chunkX = target.getX() >> 4;
+        int chunkZ = target.getZ() >> 4;
+        int requiredRadius = MathHelper.ceil(Math.max(ERUPTION_RADIUS, lastWaveRadius) / 16.0F);
+
+        if (forcedChunkRadius < 0 || chunkX != forcedChunkX || chunkZ != forcedChunkZ) {
+            releaseForceLoadedChunks(world);
+            forceLoadChunksAround(world, chunkX, chunkZ, requiredRadius, true);
+            forcedChunkX = chunkX;
+            forcedChunkZ = chunkZ;
+            forcedChunkRadius = requiredRadius;
+            return;
+        }
+
+        if (requiredRadius > forcedChunkRadius) {
+            forceLoadChunksAround(world, chunkX, chunkZ, requiredRadius, true);
+            forcedChunkRadius = requiredRadius;
+        }
+    }
+
+    private void forceLoadAtSpawn(ServerWorld world, BlockPos target) {
+        int chunkX = target.getX() >> 4;
+        int chunkZ = target.getZ() >> 4;
+        forceLoadChunksAround(world, chunkX, chunkZ, 0, true);
+        world.getChunk(chunkX, chunkZ, ChunkStatus.FULL, true);
+        forcedChunkX = chunkX;
+        forcedChunkZ = chunkZ;
+        forcedChunkRadius = 0;
+    }
+
+    private void releaseForceLoadedChunks(ServerWorld world) {
+        if (forcedChunkRadius < 0) {
+            return;
+        }
+        forceLoadChunksAround(world, forcedChunkX, forcedChunkZ, forcedChunkRadius, false);
+        forcedChunkRadius = -1;
+    }
+
+    private static void forceLoadChunksAround(ServerWorld world, int chunkX, int chunkZ, int radius, boolean forced) {
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                world.setChunkForced(chunkX + dx, chunkZ + dz, forced);
+            }
+        }
     }
 
     private boolean hasPendingFoliageWork() {
