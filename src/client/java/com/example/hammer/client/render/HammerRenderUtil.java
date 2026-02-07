@@ -18,8 +18,8 @@ public final class HammerRenderUtil {
         int b = argb & 0xFF;
 
         queue.submitCustom(matrices, layer, (entry, vertices) -> {
-            vertexLine(vertices, entry, from, r, g, b, a, lineWidth);
-            vertexLine(vertices, entry, to, r, g, b, a, lineWidth);
+            vertexLine(vertices, entry, from.x, from.y, from.z, r, g, b, a, lineWidth);
+            vertexLine(vertices, entry, to.x, to.y, to.z, r, g, b, a, lineWidth);
         });
     }
 
@@ -31,15 +31,18 @@ public final class HammerRenderUtil {
 
         int safeSegments = MathHelper.clamp(segments, 8, 256);
         queue.submitCustom(matrices, layer, (entry, vertices) -> {
-            double prevX = center.x + Math.cos(0.0D) * radius;
-            double prevZ = center.z + Math.sin(0.0D) * radius;
+            double centerX = center.x;
+            double centerY = center.y;
+            double centerZ = center.z;
+            double prevX = centerX + radius;
+            double prevZ = centerZ;
             for (int i = 1; i <= safeSegments; i++) {
                 double theta = (Math.PI * 2.0D) * (i / (double) safeSegments);
-                double x = center.x + Math.cos(theta) * radius;
-                double z = center.z + Math.sin(theta) * radius;
+                double x = centerX + Math.cos(theta) * radius;
+                double z = centerZ + Math.sin(theta) * radius;
 
-                vertexLine(vertices, entry, new Vec3d(prevX, center.y, prevZ), r, g, b, a, lineWidth);
-                vertexLine(vertices, entry, new Vec3d(x, center.y, z), r, g, b, a, lineWidth);
+                vertexLine(vertices, entry, prevX, centerY, prevZ, r, g, b, a, lineWidth);
+                vertexLine(vertices, entry, x, centerY, z, r, g, b, a, lineWidth);
 
                 prevX = x;
                 prevZ = z;
@@ -47,8 +50,8 @@ public final class HammerRenderUtil {
         });
     }
 
-    private static void vertexLine(VertexConsumer vertices, MatrixStack.Entry entry, Vec3d pos, int r, int g, int b, int a, float lineWidth) {
-        vertices.vertex(entry, (float) pos.x, (float) pos.y, (float) pos.z)
+    private static void vertexLine(VertexConsumer vertices, MatrixStack.Entry entry, double x, double y, double z, int r, int g, int b, int a, float lineWidth) {
+        vertices.vertex(entry, (float) x, (float) y, (float) z)
                 .color(r, g, b, a)
                 .normal(entry, 0.0F, 1.0F, 0.0F);
         vertices.lineWidth(lineWidth);

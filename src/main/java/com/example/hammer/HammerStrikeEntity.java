@@ -1,7 +1,6 @@
 package com.example.hammer;
 
 import com.example.explosion.ExplosionCarver;
-import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
@@ -72,7 +71,6 @@ public class HammerStrikeEntity extends Entity {
     private static final int PLAYER_EFFECT_RADIUS = 100;
 
     private final Deque<BlockPos> eruptionQueue = new ArrayDeque<>();
-    private final ObjectArrayList<BlockPos> craterColumns = new ObjectArrayList<>();
     private float lastWaveRadius;
 
     private int forcedChunkX;
@@ -301,6 +299,8 @@ public class HammerStrikeEntity extends Entity {
 
     private void scheduleCraterCarve(ServerWorld world) {
         BlockPos center = getTargetPos();
+        int centerX = center.getX();
+        int centerZ = center.getZ();
         ServerPlayerEntity owner = getOwnerPlayer(world);
 
         int surfaceY = center.getY();
@@ -314,7 +314,7 @@ public class HammerStrikeEntity extends Entity {
         float power = Math.max(64.0F, requiredBoundingRadius / 1.25F);
         float energyMultiplier = MathHelper.clamp(1.0F + (actualDepth / 16.0F), 1.0F, 12.0F);
 
-        Vec3d explosionCenter = new Vec3d(center.getX() + 0.5D, surfaceY + 0.5D, center.getZ() + 0.5D);
+        Vec3d explosionCenter = new Vec3d(centerX + 0.5D, surfaceY + 0.5D, centerZ + 0.5D);
         ExplosionImpl explosion = new ExplosionImpl(world, null, null, null, explosionCenter, power, false, Explosion.DestructionType.DESTROY);
 
         BiPredicate<BlockPos, BlockState> canAffectBlock = (pos, state) -> {
@@ -323,8 +323,8 @@ public class HammerStrikeEntity extends Entity {
                 return false;
             }
 
-            int dx = pos.getX() - center.getX();
-            int dz = pos.getZ() - center.getZ();
+            int dx = pos.getX() - centerX;
+            int dz = pos.getZ() - centerZ;
 
             if (y > surfaceY) {
                 if ((dx * dx + dz * dz) > craterRadiusSquared) {
@@ -369,32 +369,20 @@ public class HammerStrikeEntity extends Entity {
 
     private void beginEruption(ServerWorld world) {
         eruptionQueue.clear();
-        craterColumns.clear();
         lastWaveRadius = 0.0F;
-
-        BlockPos center = getTargetPos();
-        for (int dx = -ERUPTION_RADIUS; dx <= ERUPTION_RADIUS; dx++) {
-            for (int dz = -ERUPTION_RADIUS; dz <= ERUPTION_RADIUS; dz++) {
-                if ((dx * dx + dz * dz) > (ERUPTION_RADIUS * ERUPTION_RADIUS)) {
-                    continue;
-                }
-
-                int x = center.getX() + dx;
-                int z = center.getZ() + dz;
-                craterColumns.add(new BlockPos(x, center.getY(), z));
-            }
-        }
 
         if (isPreview()) {
             return;
         }
 
-        ServerPlayerEntity owner = getOwnerPlayer(world);
-
         vaporizeWeakMobs(world);
     }
 
     private void tickEruption(ServerWorld world) {
+        if (eruptionQueue.isEmpty()) {
+            return;
+        }
+
         int remainingTicks = Math.max(1, (HammerStrikeTimeline.STAGE_4_ERUPTION_END + 1) - strikeTicks);
         int dynamicBudget = (int) Math.ceil(eruptionQueue.size() / (double) remainingTicks);
         int budget = MathHelper.clamp(Math.max(dynamicBudget, ERUPTION_BLOCKS_PER_TICK), 1, 10_000);

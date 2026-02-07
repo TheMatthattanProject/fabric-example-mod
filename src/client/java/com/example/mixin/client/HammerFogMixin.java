@@ -23,13 +23,12 @@ public class HammerFogMixin {
             return original;
         }
 
-        Vector4f target = HammerClientEffects.fogTargetColor();
         float t = Math.min(1.0F, strength);
 
         return new Vector4f(
-                MathHelper.lerp(t, original.x, target.x),
-                MathHelper.lerp(t, original.y, target.y),
-                MathHelper.lerp(t, original.z, target.z),
+                MathHelper.lerp(t, original.x, HammerClientEffects.fogTargetRed()),
+                MathHelper.lerp(t, original.y, HammerClientEffects.fogTargetGreen()),
+                MathHelper.lerp(t, original.z, HammerClientEffects.fogTargetBlue()),
                 original.w
         );
     }

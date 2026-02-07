@@ -33,8 +33,6 @@ import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
-import org.jetbrains.annotations.Nullable;
-import org.joml.Vector4f;
 
 import java.util.HashMap;
 import java.util.Iterator;
@@ -77,6 +75,12 @@ public final class HammerClientEffects {
     private static final float PRESSURE_WAVE_RADIUS = 80.0F;
     private static final float ASHFALL_RADIUS = 100.0F;
     private static final int ASHFALL_TICKS = 1200;
+    private static final Vec3d BEAM_CHARGE_DISK_CENTER = new Vec3d(0.0D, 0.04D, 0.0D);
+    private static final Vec3d PRESSURE_WAVE_OUTLINE_CENTER = new Vec3d(0.0D, 0.05D, 0.0D);
+    private static final Set<Identifier> HAMMER_POST_EFFECT_TARGETS = Set.of(PostEffectProcessor.MAIN);
+    private static final int CYLINDER_SEGMENTS = 48;
+    private static final float[] CYLINDER_UNIT_X = new float[CYLINDER_SEGMENTS + 1];
+    private static final float[] CYLINDER_UNIT_Z = new float[CYLINDER_SEGMENTS + 1];
 
     private static final Map<Integer, ClientStrikeState> STRIKES = new HashMap<>();
 
@@ -88,6 +92,14 @@ public final class HammerClientEffects {
     private static float ringStrength;
     private static float glitchStrength;
     private static float beamStrength;
+
+    static {
+        for (int i = 0; i <= CYLINDER_SEGMENTS; i++) {
+            double angle = (Math.PI * 2.0D) * (i / (double) CYLINDER_SEGMENTS);
+            CYLINDER_UNIT_X[i] = (float) Math.cos(angle);
+            CYLINDER_UNIT_Z[i] = (float) Math.sin(angle);
+        }
+    }
 
     private HammerClientEffects() {
     }
@@ -125,8 +137,16 @@ public final class HammerClientEffects {
         return beamStrength;
     }
 
-    public static Vector4f fogTargetColor() {
-        return new Vector4f(TARGET_FOG_R, TARGET_FOG_G, TARGET_FOG_B, 1.0F);
+    public static float fogTargetRed() {
+        return TARGET_FOG_R;
+    }
+
+    public static float fogTargetGreen() {
+        return TARGET_FOG_G;
+    }
+
+    public static float fogTargetBlue() {
+        return TARGET_FOG_B;
     }
 
     public static float fogDistanceMultiplier() {
@@ -141,7 +161,7 @@ public final class HammerClientEffects {
 
         int id = payload.strikeEntityId();
         ClientStrikeState state = STRIKES.computeIfAbsent(id, ignored -> new ClientStrikeState());
-        state.targetPos = payload.targetPos();
+        applyTargetPos(state, payload.targetPos());
         state.seed = payload.seed();
         state.stage = payload.stage();
         state.stageStrikeTick = payload.stageStrikeTick();
@@ -159,9 +179,14 @@ public final class HammerClientEffects {
         }
 
         ClientStrikeState state = STRIKES.computeIfAbsent(payload.strikeEntityId(), ignored -> new ClientStrikeState());
-        state.targetPos = payload.targetPos();
+        applyTargetPos(state, payload.targetPos());
         state.craterCompleteWorldTime = payload.completionWorldTime();
         state.lastSeenWorldTime = client.world.getTime();
+    }
+
+    private static void applyTargetPos(ClientStrikeState state, BlockPos targetPos) {
+        state.targetPos = targetPos;
+        state.targetCenter = impactCenter(targetPos);
     }
 
     private static void tickClient(MinecraftClient client) {
@@ -203,7 +228,7 @@ public final class HammerClientEffects {
                 continue;
             }
 
-            Vec3d impactPos = impactCenter(strike.targetPos);
+            Vec3d impactPos = strike.targetCenter;
             double dist = listenerPos.distanceTo(impactPos);
             float distFactor = 1.0F - (float) MathHelper.clamp(dist / PLAYER_EFFECT_RADIUS, 0.0D, 1.0D);
 
@@ -266,7 +291,7 @@ public final class HammerClientEffects {
             return;
         }
 
-        Vec3d impact = impactCenter(strike.targetPos);
+        Vec3d impact = strike.targetCenter;
         double dist = client.player.getEyePos().distanceTo(impact);
         if (dist > 512.0D) {
             return;
@@ -303,7 +328,7 @@ public final class HammerClientEffects {
         float volume = 0.35F + 2.15F * MathHelper.clamp(progress, 0.0F, 1.0F);
         float pitch = 1.1F + 0.75F * MathHelper.clamp(progress, 0.0F, 1.0F);
 
-        Vec3d impact = impactCenter(strike.targetPos);
+        Vec3d impact = strike.targetCenter;
         client.world.playSound(null, impact.x, impact.y, impact.z, SoundEvents.ENTITY_LIGHTNING_BOLT_THUNDER, SoundCategory.AMBIENT, volume, pitch);
     }
 
@@ -312,16 +337,19 @@ public final class HammerClientEffects {
             return;
         }
 
-        Vec3d center = impactCenter(strike.targetPos).add(0.0D, (CONE_TIP_START_Y - strike.targetPos.getY()), 0.0D);
+        double centerX = strike.targetCenter.x;
+        double centerZ = strike.targetCenter.z;
         for (int i = 0; i < 120; i++) {
             double theta = client.world.random.nextDouble() * Math.PI * 2.0D;
+            double cosTheta = Math.cos(theta);
+            double sinTheta = Math.sin(theta);
             double r = client.world.random.nextDouble() * 40.0D;
-            double x = center.x + Math.cos(theta) * r;
-            double z = center.z + Math.sin(theta) * r;
+            double x = centerX + cosTheta * r;
+            double z = centerZ + sinTheta * r;
             double y = CONE_TIP_START_Y + client.world.random.nextDouble() * 20.0D;
 
-            double vx = Math.cos(theta) * (0.18D + client.world.random.nextDouble() * 0.25D);
-            double vz = Math.sin(theta) * (0.18D + client.world.random.nextDouble() * 0.25D);
+            double vx = cosTheta * (0.18D + client.world.random.nextDouble() * 0.25D);
+            double vz = sinTheta * (0.18D + client.world.random.nextDouble() * 0.25D);
             client.world.addParticleClient(ParticleTypes.CLOUD, x, y, z, vx, 0.02D, vz);
         }
     }
@@ -330,7 +358,9 @@ public final class HammerClientEffects {
         if (client.world == null) {
             return;
         }
-        Vec3d center = impactCenter(strike.targetPos).add(0.0D, 0.02D, 0.0D);
+        double centerX = strike.targetCenter.x;
+        double centerY = strike.targetCenter.y + 0.02D;
+        double centerZ = strike.targetCenter.z;
 
         float progress = (strikeTick - STAGE_3_STROKE_START) / (float) Math.max(1, (STAGE_3_STROKE_END - STAGE_3_STROKE_START));
         float intensity = smoothStep(progress);
@@ -341,35 +371,35 @@ public final class HammerClientEffects {
         double lavaLift = 0.05D + 0.08D * intensity;
 
         for (int i = 0; i < lavaCount; i++) {
-            double x = center.x + (client.world.random.nextDouble() - 0.5D) * lavaSpread;
-            double z = center.z + (client.world.random.nextDouble() - 0.5D) * lavaSpread;
+            double x = centerX + (client.world.random.nextDouble() - 0.5D) * lavaSpread;
+            double z = centerZ + (client.world.random.nextDouble() - 0.5D) * lavaSpread;
             double vx = (client.world.random.nextDouble() - 0.5D) * lavaSpeed;
             double vz = (client.world.random.nextDouble() - 0.5D) * lavaSpeed;
             double vy = lavaLift + client.world.random.nextDouble() * (0.08D + 0.08D * intensity);
-            client.world.addParticleClient(ParticleTypes.LAVA, x, center.y, z, vx, vy, vz);
+            client.world.addParticleClient(ParticleTypes.LAVA, x, centerY, z, vx, vy, vz);
         }
 
         int smokeCount = 100 + MathHelper.floor(140 * intensity);
         double smokeSpread = 0.75D + 0.55D * intensity;
         for (int i = 0; i < smokeCount; i++) {
-            double x = center.x + (client.world.random.nextDouble() - 0.5D) * smokeSpread;
-            double z = center.z + (client.world.random.nextDouble() - 0.5D) * smokeSpread;
+            double x = centerX + (client.world.random.nextDouble() - 0.5D) * smokeSpread;
+            double z = centerZ + (client.world.random.nextDouble() - 0.5D) * smokeSpread;
             double vy = 0.10D + client.world.random.nextDouble() * (0.12D + 0.10D * intensity);
-            client.world.addParticleClient(ParticleTypes.LARGE_SMOKE, x, center.y, z, 0.0D, vy, 0.0D);
+            client.world.addParticleClient(ParticleTypes.LARGE_SMOKE, x, centerY, z, 0.0D, vy, 0.0D);
         }
 
         int sparkCount = MathHelper.floor(12 * intensity);
         for (int i = 0; i < sparkCount; i++) {
-            double x = center.x + (client.world.random.nextDouble() - 0.5D) * 0.45D;
-            double z = center.z + (client.world.random.nextDouble() - 0.5D) * 0.45D;
+            double x = centerX + (client.world.random.nextDouble() - 0.5D) * 0.45D;
+            double z = centerZ + (client.world.random.nextDouble() - 0.5D) * 0.45D;
             double vx = (client.world.random.nextDouble() - 0.5D) * (0.16D + 0.12D * intensity);
             double vz = (client.world.random.nextDouble() - 0.5D) * (0.16D + 0.12D * intensity);
             double vy = 0.18D + client.world.random.nextDouble() * 0.18D;
-            client.world.addParticleClient(ParticleTypes.FLAME, x, center.y, z, vx, vy, vz);
+            client.world.addParticleClient(ParticleTypes.FLAME, x, centerY, z, vx, vy, vz);
         }
 
         if (intensity > 0.7F && client.world.random.nextFloat() < intensity * 0.18F) {
-            client.world.addParticleClient(TintedParticleEffect.create(ParticleTypes.FLASH, 0xFFFFFFFF), center.x, center.y + 0.1D, center.z, 0.0D, 0.0D, 0.0D);
+            client.world.addParticleClient(TintedParticleEffect.create(ParticleTypes.FLASH, 0xFFFFFFFF), centerX, centerY + 0.1D, centerZ, 0.0D, 0.0D, 0.0D);
         }
     }
 
@@ -382,7 +412,7 @@ public final class HammerClientEffects {
         float radius = MathHelper.clamp(p, 0.0F, 1.0F) * PRESSURE_WAVE_RADIUS;
         float dustRadius = Math.max(0.0F, radius - 2.0F);
 
-        Vec3d center = impactCenter(strike.targetPos);
+        Vec3d center = strike.targetCenter;
         for (int i = 0; i < 180; i++) {
             double theta = client.world.random.nextDouble() * Math.PI * 2.0D;
             double r = dustRadius + (client.world.random.nextDouble() - 0.5D) * 0.9D;
@@ -397,7 +427,7 @@ public final class HammerClientEffects {
         if (client.world == null) {
             return;
         }
-        Vec3d center = impactCenter(strike.targetPos);
+        Vec3d center = strike.targetCenter;
         for (int i = 0; i < 60; i++) {
             double theta = client.world.random.nextDouble() * Math.PI * 2.0D;
             double r = Math.sqrt(client.world.random.nextDouble()) * ASHFALL_RADIUS;
@@ -421,7 +451,7 @@ public final class HammerClientEffects {
             accessor.modid$setPostProcessorEnabled(true);
         }
 
-        client.getShaderLoader().loadPostEffect(HAMMER_POST_EFFECT, Set.of(PostEffectProcessor.MAIN));
+        client.getShaderLoader().loadPostEffect(HAMMER_POST_EFFECT, HAMMER_POST_EFFECT_TARGETS);
     }
 
     private static void clearPostEffect(MinecraftClient client) {
@@ -567,17 +597,16 @@ public final class HammerClientEffects {
         long worldTime = client.world.getTime();
 
         for (ClientStrikeState strike : STRIKES.values()) {
-            Vec3d impactWorld = impactCenter(strike.targetPos);
+            Vec3d impactWorld = strike.targetCenter;
             double distSq = impactWorld.squaredDistanceTo(cameraPos);
             if (distSq > (1024.0D * 1024.0D)) {
                 continue;
             }
 
             float strikeTime = strikeTime(worldTime, strike, tickDelta);
-            Vec3d center = impactWorld.subtract(cameraPos);
 
             matrices.push();
-            matrices.translate(center.x, center.y, center.z);
+            matrices.translate(impactWorld.x - cameraPos.x, impactWorld.y - cameraPos.y, impactWorld.z - cameraPos.z);
 
             float endTick = beamEndTick(strike);
             float extensionEndTick = extensionEndTick(strike);
@@ -699,9 +728,8 @@ public final class HammerClientEffects {
         int outerAlpha = MathHelper.clamp(MathHelper.floor(50 + 140 * strength), 0, 255);
         int innerAlpha = MathHelper.clamp(MathHelper.floor(90 + 140 * strength * pulse), 0, 255);
 
-        Vec3d center = new Vec3d(0.0D, 0.04D, 0.0D);
-        HammerRenderUtil.submitCircle(queue, matrices, RenderLayers.linesTranslucent(), center, outerRadius, argb(outerAlpha, 255, 170, 170), 2.2F + 1.2F * strength, 72);
-        HammerRenderUtil.submitCircle(queue, matrices, RenderLayers.linesTranslucent(), center, innerRadius, argb(innerAlpha, 255, 235, 235), 1.6F + 0.9F * strength, 36);
+        HammerRenderUtil.submitCircle(queue, matrices, RenderLayers.linesTranslucent(), BEAM_CHARGE_DISK_CENTER, outerRadius, argb(outerAlpha, 255, 170, 170), 2.2F + 1.2F * strength, 72);
+        HammerRenderUtil.submitCircle(queue, matrices, RenderLayers.linesTranslucent(), BEAM_CHARGE_DISK_CENTER, innerRadius, argb(innerAlpha, 255, 235, 235), 1.6F + 0.9F * strength, 36);
     }
 
     private static void renderPressureWaveOutline(OrderedRenderCommandQueue queue, MatrixStack matrices, float strikeTime) {
@@ -711,7 +739,7 @@ public final class HammerClientEffects {
             return;
         }
 
-        HammerRenderUtil.submitCircle(queue, matrices, RenderLayers.linesTranslucent(), new Vec3d(0.0D, 0.05D, 0.0D), radius, argb(140, 255, 255, 255), 3.0F, 96);
+        HammerRenderUtil.submitCircle(queue, matrices, RenderLayers.linesTranslucent(), PRESSURE_WAVE_OUTLINE_CENTER, radius, argb(140, 255, 255, 255), 3.0F, 96);
     }
 
     private static void submitCrossBeam(
@@ -769,17 +797,15 @@ public final class HammerClientEffects {
         int g = (argb >>> 8) & 0xFF;
         int b = argb & 0xFF;
 
-        int segments = 48;
+        int segments = CYLINDER_SEGMENTS;
         queue.submitCustom(matrices, RenderLayers.entityTranslucent(texture), (entry, vertices) -> {
             for (int i = 0; i < segments; i++) {
                 float u0 = (i / (float) segments) + uScroll;
                 float u1 = ((i + 1) / (float) segments) + uScroll;
-                double a0 = (Math.PI * 2.0D) * (i / (double) segments);
-                double a1 = (Math.PI * 2.0D) * ((i + 1) / (double) segments);
-                float x0 = (float) (Math.cos(a0) * radius);
-                float z0 = (float) (Math.sin(a0) * radius);
-                float x1 = (float) (Math.cos(a1) * radius);
-                float z1 = (float) (Math.sin(a1) * radius);
+                float x0 = CYLINDER_UNIT_X[i] * radius;
+                float z0 = CYLINDER_UNIT_Z[i] * radius;
+                float x1 = CYLINDER_UNIT_X[i + 1] * radius;
+                float z1 = CYLINDER_UNIT_Z[i + 1] * radius;
 
                 float v0 = vScroll;
                 float v1 = vScroll + height * 0.05F;
@@ -820,6 +846,7 @@ public final class HammerClientEffects {
 
     private static final class ClientStrikeState {
         BlockPos targetPos = BlockPos.ORIGIN;
+        Vec3d targetCenter = impactCenter(BlockPos.ORIGIN);
         int seed;
         HammerStage stage = HammerStage.TARGETING;
         int stageStrikeTick;
