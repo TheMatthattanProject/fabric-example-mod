@@ -42,6 +42,7 @@ public final class HammerConfig {
     private static final int AMMO_COST = readInt("ammoCost", 0, 0, 64);
 
     private static final boolean CLIENT_FX_ENABLED = readBoolean("clientFx", true);
+    private static final ClientFxPreset CLIENT_FX_PRESET = readClientFxPreset("clientFxPreset", ClientFxPreset.CINEMATIC);
     private static final int CLIENT_FX_NEAR_DISTANCE = readInt("clientFxNearDistance", 96, 16, 1024);
     private static final int CLIENT_FX_FAR_DISTANCE = readInt("clientFxFarDistance", 256, 32, 2048);
 
@@ -165,6 +166,58 @@ public final class HammerConfig {
         return CLIENT_FX_FAR_DISTANCE;
     }
 
+    public static ClientFxPreset clientFxPreset() {
+        return CLIENT_FX_PRESET;
+    }
+
+    public static float clientFxBeamScale() {
+        return clientFxBeamScale(CLIENT_FX_PRESET);
+    }
+
+    public static float clientFxBeamScale(ClientFxPreset preset) {
+        return (CLIENT_FX_ENABLED && CLIENT_FX_BEAM) ? preset.beamScale : 0.0F;
+    }
+
+    public static float clientFxCollapseScale() {
+        return clientFxCollapseScale(CLIENT_FX_PRESET);
+    }
+
+    public static float clientFxCollapseScale(ClientFxPreset preset) {
+        return (CLIENT_FX_ENABLED && CLIENT_FX_IMPACT_BLOOM) ? preset.collapseScale : 0.0F;
+    }
+
+    public static float clientFxImpactScale() {
+        return clientFxImpactScale(CLIENT_FX_PRESET);
+    }
+
+    public static float clientFxImpactScale(ClientFxPreset preset) {
+        return (CLIENT_FX_ENABLED && CLIENT_FX_IMPACT_BLOOM) ? preset.impactScale : 0.0F;
+    }
+
+    public static float clientFxShockRingScale() {
+        return clientFxShockRingScale(CLIENT_FX_PRESET);
+    }
+
+    public static float clientFxShockRingScale(ClientFxPreset preset) {
+        return (CLIENT_FX_ENABLED && CLIENT_FX_SHOCK_RING) ? preset.shockRingScale : 0.0F;
+    }
+
+    public static float clientFxHeatHazeScale() {
+        return clientFxHeatHazeScale(CLIENT_FX_PRESET);
+    }
+
+    public static float clientFxHeatHazeScale(ClientFxPreset preset) {
+        return (CLIENT_FX_ENABLED && CLIENT_FX_HEAT_HAZE) ? preset.heatHazeScale : 0.0F;
+    }
+
+    public static float clientFxHudScale() {
+        return clientFxHudScale(CLIENT_FX_PRESET);
+    }
+
+    public static float clientFxHudScale(ClientFxPreset preset) {
+        return (CLIENT_FX_ENABLED && CLIENT_FX_HUD) ? preset.hudScale : 0.0F;
+    }
+
     public static boolean clientFxBeam() {
         return CLIENT_FX_ENABLED && CLIENT_FX_BEAM;
     }
@@ -262,6 +315,79 @@ public final class HammerConfig {
             case "crust", "default" -> BlockDamageMode.CRUST;
             default -> defaultValue;
         };
+    }
+
+    private static ClientFxPreset readClientFxPreset(String suffix, ClientFxPreset defaultValue) {
+        String raw = System.getProperty(PREFIX + suffix);
+        if (raw == null || raw.isBlank()) {
+            return defaultValue;
+        }
+        return parseClientFxPreset(raw, defaultValue);
+    }
+
+    public static ClientFxPreset parseClientFxPreset(String raw, ClientFxPreset defaultValue) {
+        if (raw == null || raw.isBlank()) {
+            return defaultValue;
+        }
+        String normalized = raw.trim().toLowerCase();
+        return switch (normalized) {
+            case "subtle", "low", "lite" -> ClientFxPreset.SUBTLE;
+            case "cinematic", "default", "normal" -> ClientFxPreset.CINEMATIC;
+            case "apocalyptic", "extreme", "high", "max" -> ClientFxPreset.APOCALYPTIC;
+            default -> defaultValue;
+        };
+    }
+
+    public enum ClientFxPreset {
+        SUBTLE(0, "subtle", 0.78F, 0.82F, 0.80F, 0.72F, 0.78F, 0.84F),
+        CINEMATIC(1, "cinematic", 1.00F, 1.00F, 1.00F, 1.00F, 1.00F, 1.00F),
+        APOCALYPTIC(2, "apocalyptic", 1.28F, 1.40F, 1.35F, 1.42F, 1.40F, 1.22F);
+
+        private final int networkId;
+        private final String id;
+        private final float beamScale;
+        private final float collapseScale;
+        private final float impactScale;
+        private final float shockRingScale;
+        private final float heatHazeScale;
+        private final float hudScale;
+
+        ClientFxPreset(
+                int networkId,
+                String id,
+                float beamScale,
+                float collapseScale,
+                float impactScale,
+                float shockRingScale,
+                float heatHazeScale,
+                float hudScale
+        ) {
+            this.networkId = networkId;
+            this.id = id;
+            this.beamScale = beamScale;
+            this.collapseScale = collapseScale;
+            this.impactScale = impactScale;
+            this.shockRingScale = shockRingScale;
+            this.heatHazeScale = heatHazeScale;
+            this.hudScale = hudScale;
+        }
+
+        public int networkId() {
+            return networkId;
+        }
+
+        public String id() {
+            return id;
+        }
+
+        public static ClientFxPreset fromNetworkId(int id) {
+            for (ClientFxPreset value : values()) {
+                if (value.networkId == id) {
+                    return value;
+                }
+            }
+            return CINEMATIC;
+        }
     }
 
     public enum BlockDamageMode {

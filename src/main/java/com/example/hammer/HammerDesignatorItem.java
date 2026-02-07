@@ -17,10 +17,19 @@ import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.Heightmap;
 import net.minecraft.world.World;
+import org.jetbrains.annotations.Nullable;
 
 public class HammerDesignatorItem extends Item {
+    @Nullable
+    private final HammerConfig.ClientFxPreset forcedFxPreset;
+
     public HammerDesignatorItem(Settings settings) {
+        this(settings, null);
+    }
+
+    public HammerDesignatorItem(Settings settings, @Nullable HammerConfig.ClientFxPreset forcedFxPreset) {
         super(settings);
+        this.forcedFxPreset = forcedFxPreset;
     }
 
     @Override
@@ -79,7 +88,8 @@ public class HammerDesignatorItem extends Item {
         int surfaceY = Math.max(serverWorld.getBottomY(), topY - 1);
         BlockPos surface = new BlockPos(x, surfaceY, z);
 
-        HammerStrikeEntity.spawn(serverWorld, surface, player);
+        HammerConfig.ClientFxPreset preset = forcedFxPreset == null ? HammerConfig.clientFxPreset() : forcedFxPreset;
+        HammerStrikeEntity.spawn(serverWorld, surface, player, false, preset);
         player.getItemCooldownManager().set(stack, HammerConfig.cooldownTicks());
         return false;
     }

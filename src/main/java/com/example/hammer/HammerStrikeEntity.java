@@ -51,6 +51,7 @@ public class HammerStrikeEntity extends Entity {
     private static final TrackedData<Integer> SEED = DataTracker.registerData(HammerStrikeEntity.class, TrackedDataHandlerRegistry.INTEGER);
     private static final TrackedData<Integer> OWNER_ID = DataTracker.registerData(HammerStrikeEntity.class, TrackedDataHandlerRegistry.INTEGER);
     private static final TrackedData<Boolean> PREVIEW = DataTracker.registerData(HammerStrikeEntity.class, TrackedDataHandlerRegistry.BOOLEAN);
+    private static final TrackedData<Integer> FX_PRESET = DataTracker.registerData(HammerStrikeEntity.class, TrackedDataHandlerRegistry.INTEGER);
 
     private static final TagKey<Block> GLASS_BLOCKS = TagKey.of(RegistryKeys.BLOCK, Identifier.ofVanilla("glass"));
     private static final TagKey<Block> GLASS_PANES = TagKey.of(RegistryKeys.BLOCK, Identifier.ofVanilla("glass_panes"));
@@ -99,15 +100,26 @@ public class HammerStrikeEntity extends Entity {
     }
 
     public static HammerStrikeEntity spawn(ServerWorld world, BlockPos target, @Nullable ServerPlayerEntity owner) {
-        return spawn(world, target, owner, false);
+        return spawn(world, target, owner, false, HammerConfig.clientFxPreset());
     }
 
     public static HammerStrikeEntity spawn(ServerWorld world, BlockPos target, @Nullable ServerPlayerEntity owner, boolean preview) {
+        return spawn(world, target, owner, preview, HammerConfig.clientFxPreset());
+    }
+
+    public static HammerStrikeEntity spawn(
+            ServerWorld world,
+            BlockPos target,
+            @Nullable ServerPlayerEntity owner,
+            boolean preview,
+            HammerConfig.ClientFxPreset fxPreset
+    ) {
         HammerStrikeEntity strike = new HammerStrikeEntity(HammerEntities.HAMMER_STRIKE, world);
         strike.setPosition(target.getX() + 0.5D, target.getY() + 0.02D, target.getZ() + 0.5D);
         strike.setTargetPos(target);
         strike.setOwner(owner);
         strike.setPreview(preview);
+        strike.setFxPreset(fxPreset);
         strike.setSeed(strike.random.nextInt());
         strike.forceLoadAtSpawn(world, target);
         if (!world.spawnEntity(strike)) {
@@ -122,6 +134,7 @@ public class HammerStrikeEntity extends Entity {
         builder.add(SEED, 0);
         builder.add(OWNER_ID, -1);
         builder.add(PREVIEW, false);
+        builder.add(FX_PRESET, HammerConfig.clientFxPreset().networkId());
     }
 
     public BlockPos getTargetPos() {
@@ -156,12 +169,21 @@ public class HammerStrikeEntity extends Entity {
         dataTracker.set(PREVIEW, preview);
     }
 
+    public HammerConfig.ClientFxPreset getFxPreset() {
+        return HammerConfig.ClientFxPreset.fromNetworkId(dataTracker.get(FX_PRESET));
+    }
+
+    public void setFxPreset(HammerConfig.ClientFxPreset fxPreset) {
+        dataTracker.set(FX_PRESET, fxPreset.networkId());
+    }
+
     @Override
     protected void readCustomData(ReadView view) {
         dataTracker.set(TARGET_POS, BlockPos.fromLong(view.getLong("Target", BlockPos.ORIGIN.asLong())));
         dataTracker.set(SEED, view.getInt("Seed", 0));
         dataTracker.set(OWNER_ID, view.getInt("OwnerId", -1));
         dataTracker.set(PREVIEW, view.getBoolean("Preview", false));
+        dataTracker.set(FX_PRESET, view.getInt("FxPreset", HammerConfig.clientFxPreset().networkId()));
 
         strikeTicks = view.getInt("StrikeTicks", 0);
         lastWaveRadius = view.getFloat("LastWaveRadius", 0.0F);
@@ -177,6 +199,7 @@ public class HammerStrikeEntity extends Entity {
         view.putInt("Seed", getSeed());
         view.putInt("OwnerId", getOwnerId());
         view.putBoolean("Preview", isPreview());
+        view.putInt("FxPreset", getFxPreset().networkId());
 
         view.putInt("StrikeTicks", strikeTicks);
         view.putFloat("LastWaveRadius", lastWaveRadius);
@@ -364,7 +387,7 @@ public class HammerStrikeEntity extends Entity {
     }
 
     private void enterStage(ServerWorld world, HammerStage stage) {
-        HammerNetworking.sendStage(world, getTargetPos(), getId(), getSeed(), stage, strikeTicks, world.getTime());
+        HammerNetworking.sendStage(world, getTargetPos(), getId(), getSeed(), getFxPreset(), stage, strikeTicks, world.getTime());
     }
 
     private void beginEruption(ServerWorld world) {

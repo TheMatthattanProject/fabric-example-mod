@@ -59,7 +59,7 @@ public final class HammerTargetingClient {
 
         PlayerEntity player = client.player;
         ItemStack active = player.getActiveItem();
-        if (!player.isUsingItem() || active.isEmpty() || !active.isOf(ModItems.HAMMER_DESIGNATOR)) {
+        if (!player.isUsingItem() || active.isEmpty() || !ModItems.isHammerDesignator(active)) {
             designating = false;
             designateTicks = 0;
             markerCenter = null;

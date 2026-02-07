@@ -1,0 +1,19 @@
+{
+  "model": {
+    "type": "minecraft:composite",
+    "models": [
+      {
+        "type": "minecraft:model",
+        "model": "minecraft:item/spyglass"
+      },
+      {
+        "type": "minecraft:model",
+        "model": "minecraft:item/blaze_rod"
+      },
+      {
+        "type": "minecraft:model",
+        "model": "minecraft:item/fire_charge"
+      }
+    ]
+  }
+}

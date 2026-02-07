@@ -39,6 +39,16 @@
             "name": "BeamStrength",
             "type": "float",
             "value": 0.0
+          },
+          {
+            "name": "CollapseStrength",
+            "type": "float",
+            "value": 0.0
+          },
+          {
+            "name": "HeatShimmerStrength",
+            "type": "float",
+            "value": 0.0
           }
         ]
       }

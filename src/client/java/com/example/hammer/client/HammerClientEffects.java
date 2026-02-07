@@ -1,6 +1,7 @@
 package com.example.hammer.client;
 
 import com.example.ExampleMod;
+import com.example.hammer.HammerConfig;
 import com.example.hammer.HammerStage;
 import com.example.hammer.client.render.HammerRenderUtil;
 import com.example.hammer.network.S2CHammerCraterPacket;
@@ -75,8 +76,13 @@ public final class HammerClientEffects {
     private static final float PRESSURE_WAVE_RADIUS = 80.0F;
     private static final float ASHFALL_RADIUS = 100.0F;
     private static final int ASHFALL_TICKS = 1200;
+    private static final int AFTERMATH_GROUND_VFX_TICKS = 20 * 45;
     private static final Vec3d BEAM_CHARGE_DISK_CENTER = new Vec3d(0.0D, 0.04D, 0.0D);
-    private static final Vec3d PRESSURE_WAVE_OUTLINE_CENTER = new Vec3d(0.0D, 0.05D, 0.0D);
+    private static final Vec3d PRESSURE_WAVE_PRIMARY_CENTER = new Vec3d(0.0D, 0.05D, 0.0D);
+    private static final Vec3d PRESSURE_WAVE_TRAIL_CENTER = new Vec3d(0.0D, 0.11D, 0.0D);
+    private static final Vec3d PRESSURE_WAVE_LEAD_CENTER = new Vec3d(0.0D, 0.16D, 0.0D);
+    private static final Vec3d AFTERMATH_CORE_CENTER = new Vec3d(0.0D, 0.03D, 0.0D);
+    private static final Vec3d AFTERMATH_SCORCH_CENTER = new Vec3d(0.0D, 0.07D, 0.0D);
     private static final Set<Identifier> HAMMER_POST_EFFECT_TARGETS = Set.of(PostEffectProcessor.MAIN);
     private static final int CYLINDER_SEGMENTS = 48;
     private static final float[] CYLINDER_UNIT_X = new float[CYLINDER_SEGMENTS + 1];
@@ -92,6 +98,8 @@ public final class HammerClientEffects {
     private static float ringStrength;
     private static float glitchStrength;
     private static float beamStrength;
+    private static float collapseStrength;
+    private static float heatShimmerStrength;
 
     static {
         for (int i = 0; i <= CYLINDER_SEGMENTS; i++) {
@@ -137,6 +145,14 @@ public final class HammerClientEffects {
         return beamStrength;
     }
 
+    public static float collapseStrength() {
+        return collapseStrength;
+    }
+
+    public static float heatShimmerStrength() {
+        return heatShimmerStrength;
+    }
+
     public static float fogTargetRed() {
         return TARGET_FOG_R;
     }
@@ -163,6 +179,7 @@ public final class HammerClientEffects {
         ClientStrikeState state = STRIKES.computeIfAbsent(id, ignored -> new ClientStrikeState());
         applyTargetPos(state, payload.targetPos());
         state.seed = payload.seed();
+        state.fxPreset = payload.fxPreset();
         state.stage = payload.stage();
         state.stageStrikeTick = payload.stageStrikeTick();
         state.stageStartWorldTime = payload.stageStartWorldTime();
@@ -200,6 +217,8 @@ public final class HammerClientEffects {
             ringStrength = 0.0F;
             glitchStrength = 0.0F;
             beamStrength = 0.0F;
+            collapseStrength = 0.0F;
+            heatShimmerStrength = 0.0F;
             clearPostEffect(client);
             return;
         }
@@ -216,6 +235,8 @@ public final class HammerClientEffects {
         float bestRingRadiusNorm = 0.0F;
         float maxGlitch = 0.0F;
         float maxBeam = 0.0F;
+        float maxCollapse = 0.0F;
+        float maxHeatShimmer = 0.0F;
 
         Iterator<ClientStrikeState> it = STRIKES.values().iterator();
         while (it.hasNext()) {
@@ -231,9 +252,57 @@ public final class HammerClientEffects {
             Vec3d impactPos = strike.targetCenter;
             double dist = listenerPos.distanceTo(impactPos);
             float distFactor = 1.0F - (float) MathHelper.clamp(dist / PLAYER_EFFECT_RADIUS, 0.0D, 1.0D);
+            HammerConfig.ClientFxPreset fxPreset = strike.fxPreset;
+            float beamPresetScale = HammerConfig.clientFxBeamScale(fxPreset);
+            float collapsePresetScale = HammerConfig.clientFxCollapseScale(fxPreset);
+            float impactPresetScale = HammerConfig.clientFxImpactScale(fxPreset);
+            float shockRingPresetScale = HammerConfig.clientFxShockRingScale(fxPreset);
+            float heatPresetScale = HammerConfig.clientFxHeatHazeScale(fxPreset);
 
-            float beamCharge = beamChargeStrength(strikeTime, beamEndTick(strike));
-            maxBeam = Math.max(maxBeam, beamCharge * distFactor);
+            float endTick = beamEndTick(strike);
+            float beamCharge = beamChargeStrength(strikeTime, endTick);
+            maxBeam = Math.max(maxBeam, beamCharge * distFactor * beamPresetScale);
+
+            if (strikeTime >= STAGE_2_BREACH_START && strikeTime <= (STAGE_3_STROKE_START + 6.0F)) {
+                float collapse;
+                if (strikeTime < STAGE_3_STROKE_START) {
+                    float p = (strikeTime - STAGE_2_BREACH_START) / (float) Math.max(1, STAGE_3_STROKE_START - STAGE_2_BREACH_START);
+                    float ramp = smoothStep(MathHelper.clamp(p, 0.0F, 1.0F));
+                    collapse = ramp * ramp;
+                } else {
+                    float decay = 1.0F - ((strikeTime - STAGE_3_STROKE_START) / 6.0F);
+                    collapse = MathHelper.clamp(decay, 0.0F, 1.0F);
+                }
+                maxCollapse = Math.max(maxCollapse, collapse * distFactor * collapsePresetScale);
+                maxFog = Math.max(maxFog, (0.35F + (0.65F * collapse)) * distFactor * collapsePresetScale);
+            }
+
+            if (strikeTime >= (STAGE_3_STROKE_START - 1.5F) && strikeTime <= (STAGE_3_STROKE_START + 3.5F)) {
+                float dt = strikeTime - STAGE_3_STROKE_START;
+                float ignitionFlash = (float) Math.exp(-1.3F * dt * dt);
+                maxWhiteout = Math.max(maxWhiteout, ignitionFlash * distFactor * impactPresetScale);
+            }
+
+            if (strikeTime >= STAGE_3_STROKE_START && strikeTime <= (endTick + BEAM_TAIL_TICKS)) {
+                float toward = lookingToward(player, impactPos);
+                float heat = beamCharge * distFactor * (0.35F + 0.65F * toward) * heatPresetScale;
+                maxHeatShimmer = Math.max(maxHeatShimmer, heat);
+            }
+
+            if (strikeTime >= STAGE_6_AFTERMATH_START) {
+                float aftermathProgress = (strikeTime - STAGE_6_AFTERMATH_START) / (float) AFTERMATH_GROUND_VFX_TICKS;
+                if (aftermathProgress <= 1.0F) {
+                    float life = 1.0F - MathHelper.clamp(aftermathProgress, 0.0F, 1.0F);
+                    maxHeatShimmer = Math.max(maxHeatShimmer, life * 0.28F * heatPresetScale * distFactor);
+                }
+            }
+
+            if (worldTime <= strike.aftershockPulseEndWorldTime) {
+                float remain = MathHelper.clamp((strike.aftershockPulseEndWorldTime - worldTime + 1L) / 6.0F, 0.0F, 1.0F);
+                float pulse = strike.aftershockPulseStrength * remain;
+                maxWhiteout = Math.max(maxWhiteout, pulse * distFactor);
+                maxShake = Math.max(maxShake, pulse * 0.35F * distFactor);
+            }
 
             if (strikeTime >= 0.0F && strikeTime <= STAGE_1_TARGETING_END) {
                 float progress = MathHelper.clamp(strikeTime / (float) Math.max(1, STAGE_1_TARGETING_END), 0.0F, 1.0F);
@@ -244,7 +313,7 @@ public final class HammerClientEffects {
             if (strikeTime >= STAGE_4_ERUPTION_START && strikeTime <= STAGE_4_ERUPTION_END) {
                 float t = strikeTime - STAGE_4_ERUPTION_START;
                 float alpha = (float) Math.exp(-0.20F * t);
-                maxWhiteout = Math.max(maxWhiteout, alpha * distFactor);
+                maxWhiteout = Math.max(maxWhiteout, alpha * distFactor * impactPresetScale);
             }
 
             if (strikeTime >= STAGE_6_FINAL_CUT_START && strikeTime < (STAGE_6_FINAL_CUT_START + STAGE_6_FINAL_CUT_TICKS)) {
@@ -256,7 +325,7 @@ public final class HammerClientEffects {
             if (strikeTime >= STAGE_5_WAVE_START && strikeTime <= STAGE_5_WAVE_END) {
                 float p = (strikeTime - STAGE_5_WAVE_START) / (float) Math.max(1, (STAGE_5_WAVE_END - STAGE_5_WAVE_START));
                 float radiusBlocks = MathHelper.clamp(p, 0.0F, 1.0F) * PRESSURE_WAVE_RADIUS;
-                float strength = distFactor;
+                float strength = distFactor * shockRingPresetScale;
                 if (strength > bestRingStrength) {
                     bestRingStrength = strength;
                     bestRingRadiusNorm = radiusBlocks / PRESSURE_WAVE_RADIUS;
@@ -282,6 +351,8 @@ public final class HammerClientEffects {
         ringRadiusNorm = bestRingRadiusNorm;
         glitchStrength = maxGlitch;
         beamStrength = maxBeam;
+        collapseStrength = maxCollapse;
+        heatShimmerStrength = maxHeatShimmer;
 
         tickPostEffect(client, worldTime);
     }
@@ -308,6 +379,14 @@ public final class HammerClientEffects {
 
         if (strikeTick >= STAGE_5_WAVE_START && strikeTick <= STAGE_5_WAVE_END) {
             tickDustWall(client, strike, strikeTick);
+        }
+
+        if (strikeTick >= STAGE_4_ERUPTION_END && strikeTick <= (STAGE_6_AFTERMATH_START + 120)) {
+            tickAftershockBursts(client, strike, strikeTick);
+        }
+
+        if (strikeTick >= STAGE_6_AFTERMATH_START && strikeTick <= (STAGE_6_AFTERMATH_START + AFTERMATH_GROUND_VFX_TICKS)) {
+            tickAftermathGroundVfx(client, strike, strikeTick);
         }
 
         if (strikeTick >= STAGE_6_AFTERMATH_START && strikeTick <= (STAGE_6_AFTERMATH_START + ASHFALL_TICKS)) {
@@ -438,8 +517,159 @@ public final class HammerClientEffects {
         }
     }
 
+    private static void tickAftershockBursts(MinecraftClient client, ClientStrikeState strike, int strikeTick) {
+        if (client.world == null) {
+            return;
+        }
+
+        int burstCount = aftershockBurstCount(strike.fxPreset);
+        while (strike.nextAftershockIndex < burstCount) {
+            int index = strike.nextAftershockIndex;
+            int scheduledTick = aftershockTick(strike, index);
+            if (strikeTick < scheduledTick) {
+                break;
+            }
+            if (strikeTick - scheduledTick <= 2) {
+                triggerAftershockBurst(client, strike, index, burstCount);
+            }
+            strike.nextAftershockIndex++;
+        }
+    }
+
+    private static void triggerAftershockBurst(MinecraftClient client, ClientStrikeState strike, int index, int burstCount) {
+        if (client.world == null) {
+            return;
+        }
+
+        float impactScale = HammerConfig.clientFxImpactScale(strike.fxPreset);
+        if (impactScale <= 0.001F) {
+            return;
+        }
+
+        float indexNorm = index / (float) Math.max(1, burstCount - 1);
+        float angleBase = (float) (((strike.seed * 0.013D) + (index * 2.399963229728653D)) % (Math.PI * 2.0D));
+        float angle = angleBase + ((hash01(strike.seed ^ (index * 91)) - 0.5F) * 0.9F);
+        float radius = 8.0F + (indexNorm * PRESSURE_WAVE_RADIUS * 0.52F) + ((hash01(strike.seed ^ (index * 131)) - 0.5F) * 3.4F);
+
+        double x = strike.targetCenter.x + Math.cos(angle) * radius;
+        double z = strike.targetCenter.z + Math.sin(angle) * radius;
+        double y = strike.targetCenter.y + 0.22D + (hash01(strike.seed ^ (index * 177)) * 0.36D);
+
+        client.world.addParticleClient(TintedParticleEffect.create(ParticleTypes.FLASH, 0xFFFFF0D8), x, y, z, 0.0D, 0.0D, 0.0D);
+
+        if (HammerConfig.clientFxParticles()) {
+            int smokeCount = Math.max(4, MathHelper.floor((8.0F + (8.0F * impactScale)) * (1.0F - (0.25F * indexNorm))));
+            int sparkCount = Math.max(3, MathHelper.floor((6.0F + (6.0F * impactScale)) * (1.0F - (0.20F * indexNorm))));
+            int ashCount = Math.max(6, MathHelper.floor((10.0F + (10.0F * impactScale)) * (1.0F - (0.18F * indexNorm))));
+
+            for (int i = 0; i < smokeCount; i++) {
+                double vx = (client.world.random.nextDouble() - 0.5D) * (0.10D + (0.14D * impactScale));
+                double vz = (client.world.random.nextDouble() - 0.5D) * (0.10D + (0.14D * impactScale));
+                double vy = 0.04D + client.world.random.nextDouble() * (0.08D + (0.08D * impactScale));
+                client.world.addParticleClient(ParticleTypes.LARGE_SMOKE, x, y, z, vx, vy, vz);
+            }
+
+            for (int i = 0; i < sparkCount; i++) {
+                double vx = (client.world.random.nextDouble() - 0.5D) * (0.18D + (0.12D * impactScale));
+                double vz = (client.world.random.nextDouble() - 0.5D) * (0.18D + (0.12D * impactScale));
+                double vy = 0.12D + client.world.random.nextDouble() * (0.14D + (0.10D * impactScale));
+                client.world.addParticleClient(ParticleTypes.FLAME, x, y, z, vx, vy, vz);
+            }
+
+            for (int i = 0; i < ashCount; i++) {
+                double vx = (client.world.random.nextDouble() - 0.5D) * 0.08D;
+                double vz = (client.world.random.nextDouble() - 0.5D) * 0.08D;
+                double vy = 0.01D + client.world.random.nextDouble() * 0.04D;
+                client.world.addParticleClient(ParticleTypes.ASH, x, y + 0.08D, z, vx, vy, vz);
+            }
+        }
+
+        float volume = 0.32F + (0.18F * impactScale);
+        float pitch = 0.72F + (0.18F * hash01(strike.seed ^ (index * 211)));
+        client.world.playSound(null, x, y, z, SoundEvents.ENTITY_GENERIC_EXPLODE.value(), SoundCategory.AMBIENT, volume, pitch);
+
+        float pulseStrength = MathHelper.clamp((0.20F + (0.14F * impactScale)) * (1.0F - (0.12F * indexNorm)), 0.0F, 0.70F);
+        strike.aftershockPulseStrength = Math.max(strike.aftershockPulseStrength, pulseStrength);
+        strike.aftershockPulseEndWorldTime = client.world.getTime() + 5L;
+    }
+
+    private static void tickAftermathGroundVfx(MinecraftClient client, ClientStrikeState strike, int strikeTick) {
+        if (client.world == null || !HammerConfig.clientFxParticles()) {
+            return;
+        }
+
+        float impactScale = HammerConfig.clientFxImpactScale(strike.fxPreset);
+        if (impactScale <= 0.001F) {
+            return;
+        }
+
+        float progress = (strikeTick - STAGE_6_AFTERMATH_START) / (float) AFTERMATH_GROUND_VFX_TICKS;
+        float life = 1.0F - MathHelper.clamp(progress, 0.0F, 1.0F);
+        if (life <= 0.001F) {
+            return;
+        }
+
+        int emberBudget = switch (strike.fxPreset) {
+            case SUBTLE -> 6;
+            case CINEMATIC -> 10;
+            case APOCALYPTIC -> 16;
+        };
+        int bursts = Math.max(1, MathHelper.floor(emberBudget * life * MathHelper.clamp(impactScale, 0.65F, 1.8F)));
+        float innerRadius = 5.5F + (2.8F * impactScale);
+        float scorchRadius = 11.0F + (7.0F * impactScale);
+
+        for (int i = 0; i < bursts; i++) {
+            double theta = client.world.random.nextDouble() * Math.PI * 2.0D;
+            double zone = client.world.random.nextDouble();
+            double r = zone < 0.62D
+                    ? Math.sqrt(client.world.random.nextDouble()) * innerRadius
+                    : scorchRadius + ((client.world.random.nextDouble() - 0.5D) * (2.2D + (2.0D * impactScale)));
+            double x = strike.targetCenter.x + Math.cos(theta) * r;
+            double z = strike.targetCenter.z + Math.sin(theta) * r;
+            double y = strike.targetCenter.y + 0.04D + (client.world.random.nextDouble() * 0.28D);
+
+            if (zone < 0.35D && client.world.random.nextFloat() < (0.26F * life)) {
+                double vy = 0.02D + (client.world.random.nextDouble() * 0.07D);
+                client.world.addParticleClient(ParticleTypes.FLAME, x, y, z, 0.0D, vy, 0.0D);
+            } else if (zone < 0.78D) {
+                double vy = 0.01D + (client.world.random.nextDouble() * 0.05D);
+                client.world.addParticleClient(ParticleTypes.ASH, x, y, z, 0.0D, vy, 0.0D);
+            } else {
+                double vy = 0.02D + (client.world.random.nextDouble() * 0.04D);
+                client.world.addParticleClient(ParticleTypes.LARGE_SMOKE, x, y, z, 0.0D, vy, 0.0D);
+            }
+
+            if (life > 0.35F && client.world.random.nextFloat() < (0.03F * impactScale)) {
+                client.world.addParticleClient(ParticleTypes.LAVA, x, y, z, 0.0D, 0.02D, 0.0D);
+            }
+        }
+    }
+
+    private static int aftershockBurstCount(HammerConfig.ClientFxPreset preset) {
+        return switch (preset) {
+            case SUBTLE -> 3;
+            case CINEMATIC -> 5;
+            case APOCALYPTIC -> 7;
+        };
+    }
+
+    private static int aftershockTick(ClientStrikeState strike, int index) {
+        int base = STAGE_4_ERUPTION_END + 8 + (index * 9);
+        int jitter = MathHelper.floor(hash01(strike.seed ^ (index * 59)) * 4.0F);
+        return base + jitter;
+    }
+
+    private static float hash01(int value) {
+        int n = value;
+        n ^= (n << 13);
+        n ^= (n >>> 17);
+        n ^= (n << 5);
+        return (n & 0x7FFFFFFF) / (float) 0x7FFFFFFF;
+    }
+
     private static void tickPostEffect(MinecraftClient client, long worldTime) {
-        boolean wantsShader = ringStrength > 0.001F || glitchStrength > 0.001F || beamStrength > 0.001F;
+        boolean wantsShader = ringStrength > 0.001F || glitchStrength > 0.001F || beamStrength > 0.001F
+                || collapseStrength > 0.001F || heatShimmerStrength > 0.001F;
         if (!wantsShader) {
             clearPostEffect(client);
             return;
@@ -560,9 +790,18 @@ public final class HammerClientEffects {
         if (client.player == null || client.options.hudHidden) {
             return;
         }
+        if (!HammerConfig.clientFxHud()) {
+            return;
+        }
 
         int w = client.getWindow().getScaledWidth();
         int h = client.getWindow().getScaledHeight();
+
+        float collapse = MathHelper.clamp(collapseStrength * 0.55F, 0.0F, 0.65F);
+        if (collapse > 0.001F) {
+            int a = (int) (collapse * 255.0F);
+            drawContext.fill(0, 0, w, h, (a << 24) | 0x06030C);
+        }
 
         float white = MathHelper.clamp(whiteoutAlpha, 0.0F, 1.0F);
         if (white > 0.001F) {
@@ -611,21 +850,40 @@ public final class HammerClientEffects {
             float endTick = beamEndTick(strike);
             float extensionEndTick = extensionEndTick(strike);
             float beamCharge = beamChargeStrength(strikeTime, endTick);
+            float beamScale = HammerConfig.clientFxBeamScale(strike.fxPreset);
+            float shockRingScale = HammerConfig.clientFxShockRingScale(strike.fxPreset);
             if (strikeTime >= 0.0F && strikeTime <= STAGE_1_TARGETING_END) {
-                renderLaser(queue, matrices, strike.targetPos, worldTime, tickDelta);
+                renderLaser(queue, matrices, strike.targetPos, worldTime, tickDelta, beamScale);
             }
             if (strikeTime >= STAGE_2_BREACH_START && strikeTime <= (endTick + BEAM_TAIL_TICKS)) {
-                renderHammerBeam(queue, matrices, strike.targetPos, worldTime, tickDelta, strikeTime, beamCharge, endTick, extensionEndTick, strike.seed);
+                float beamRenderCharge = MathHelper.clamp(beamCharge * beamScale, 0.0F, 1.5F);
+                if (beamRenderCharge > 0.001F) {
+                    renderHammerBeam(queue, matrices, strike.targetPos, worldTime, tickDelta, strikeTime, beamRenderCharge, endTick, extensionEndTick, strike.seed);
+                }
             }
             if (strikeTime >= STAGE_5_WAVE_START && strikeTime <= STAGE_5_WAVE_END) {
-                renderPressureWaveOutline(queue, matrices, strikeTime);
+                renderPressureWaveOutline(queue, matrices, strikeTime, shockRingScale);
+            }
+            if (strikeTime >= STAGE_6_AFTERMATH_START && strikeTime <= (STAGE_6_AFTERMATH_START + AFTERMATH_GROUND_VFX_TICKS)) {
+                renderAftermathGround(queue, matrices, strikeTime, strike);
             }
 
             matrices.pop();
         }
     }
 
-    private static void renderLaser(OrderedRenderCommandQueue queue, MatrixStack matrices, BlockPos targetPos, long worldTime, float tickDelta) {
+    private static void renderLaser(
+            OrderedRenderCommandQueue queue,
+            MatrixStack matrices,
+            BlockPos targetPos,
+            long worldTime,
+            float tickDelta,
+            float beamScale
+    ) {
+        if (beamScale <= 0.001F) {
+            return;
+        }
+
         int top = Math.max(targetPos.getY() + 1, LASER_TOP_Y);
         float height = top - (targetPos.getY() + 0.02F);
         if (height <= 0.5F) {
@@ -634,10 +892,10 @@ public final class HammerClientEffects {
 
         float time = (worldTime + tickDelta) / 20.0F;
         float pulse = 0.85F + 0.15F * MathHelper.sin(time * 2.4F);
-        float width = 0.04F + 0.02F * pulse;
+        float width = (0.04F + 0.02F * pulse) * MathHelper.clamp(0.85F + 0.25F * beamScale, 0.60F, 1.45F);
 
-        int coreAlpha = MathHelper.clamp(MathHelper.floor(170 + 70 * pulse), 0, 255);
-        int glowAlpha = MathHelper.clamp(MathHelper.floor(70 + 50 * pulse), 0, 255);
+        int coreAlpha = MathHelper.clamp(MathHelper.floor((170 + 70 * pulse) * beamScale), 0, 255);
+        int glowAlpha = MathHelper.clamp(MathHelper.floor((70 + 50 * pulse) * beamScale), 0, 255);
 
         int coreColor = (coreAlpha << 24) | (LASER_COLOR_ARGB & 0x00FFFFFF);
         submitCrossBeam(queue, matrices, WHITE_TEXTURE, width, height, coreColor, LightmapTextureManager.MAX_LIGHT_COORDINATE);
@@ -732,14 +990,83 @@ public final class HammerClientEffects {
         HammerRenderUtil.submitCircle(queue, matrices, RenderLayers.linesTranslucent(), BEAM_CHARGE_DISK_CENTER, innerRadius, argb(innerAlpha, 255, 235, 235), 1.6F + 0.9F * strength, 36);
     }
 
-    private static void renderPressureWaveOutline(OrderedRenderCommandQueue queue, MatrixStack matrices, float strikeTime) {
-        float p = (strikeTime - STAGE_5_WAVE_START) / (float) Math.max(1, (STAGE_5_WAVE_END - STAGE_5_WAVE_START));
-        float radius = MathHelper.clamp(p, 0.0F, 1.0F) * PRESSURE_WAVE_RADIUS;
-        if (radius <= 0.25F) {
+    private static void renderPressureWaveOutline(
+            OrderedRenderCommandQueue queue,
+            MatrixStack matrices,
+            float strikeTime,
+            float presetScale
+    ) {
+        if (presetScale <= 0.001F) {
             return;
         }
 
-        HammerRenderUtil.submitCircle(queue, matrices, RenderLayers.linesTranslucent(), PRESSURE_WAVE_OUTLINE_CENTER, radius, argb(140, 255, 255, 255), 3.0F, 96);
+        float p = (strikeTime - STAGE_5_WAVE_START) / (float) Math.max(1, (STAGE_5_WAVE_END - STAGE_5_WAVE_START));
+        float baseRadius = MathHelper.clamp(p, 0.0F, 1.0F) * PRESSURE_WAVE_RADIUS;
+        if (baseRadius <= 0.25F) {
+            return;
+        }
+
+        float pulse = 0.85F + 0.15F * MathHelper.sin((strikeTime - STAGE_5_WAVE_START) * 0.65F);
+        float primaryRadius = baseRadius;
+        float spacingScale = MathHelper.clamp(0.85F + 0.30F * presetScale, 0.65F, 1.55F);
+        float trailRadius = Math.max(0.0F, baseRadius - ((1.35F + 0.65F * pulse) * spacingScale));
+        float leadRadius = baseRadius + ((0.95F + 0.55F * pulse) * spacingScale);
+
+        int primaryAlpha = MathHelper.clamp(MathHelper.floor((120 + 80 * pulse) * presetScale), 0, 255);
+        int trailAlpha = MathHelper.clamp(MathHelper.floor((95 + 60 * pulse) * presetScale), 0, 255);
+        int leadAlpha = MathHelper.clamp(MathHelper.floor((70 + 45 * pulse) * presetScale), 0, 255);
+        float widthScale = MathHelper.clamp(0.75F + 0.35F * presetScale, 0.55F, 1.65F);
+        int primarySegments = presetScale >= 1.20F ? 128 : (presetScale <= 0.85F ? 96 : 112);
+        int trailSegments = presetScale >= 1.20F ? 96 : (presetScale <= 0.85F ? 72 : 84);
+        int leadSegments = presetScale >= 1.20F ? 136 : (presetScale <= 0.85F ? 104 : 120);
+
+        HammerRenderUtil.submitCircle(queue, matrices, RenderLayers.linesTranslucent(), PRESSURE_WAVE_PRIMARY_CENTER, primaryRadius, argb(primaryAlpha, 255, 244, 232), 3.4F * widthScale, primarySegments);
+        if (trailRadius > 0.35F) {
+            HammerRenderUtil.submitCircle(queue, matrices, RenderLayers.linesTranslucent(), PRESSURE_WAVE_TRAIL_CENTER, trailRadius, argb(trailAlpha, 220, 200, 170), 2.8F * widthScale, trailSegments);
+        }
+        HammerRenderUtil.submitCircle(queue, matrices, RenderLayers.linesTranslucent(), PRESSURE_WAVE_LEAD_CENTER, leadRadius, argb(leadAlpha, 200, 225, 255), 2.5F * widthScale, leadSegments);
+    }
+
+    private static void renderAftermathGround(
+            OrderedRenderCommandQueue queue,
+            MatrixStack matrices,
+            float strikeTime,
+            ClientStrikeState strike
+    ) {
+        float impactScale = HammerConfig.clientFxImpactScale(strike.fxPreset);
+        if (impactScale <= 0.001F) {
+            return;
+        }
+
+        float progress = (strikeTime - STAGE_6_AFTERMATH_START) / (float) AFTERMATH_GROUND_VFX_TICKS;
+        float life = 1.0F - MathHelper.clamp(progress, 0.0F, 1.0F);
+        if (life <= 0.001F) {
+            return;
+        }
+
+        float pulse = 0.80F + (0.20F * MathHelper.sin(((strikeTime - STAGE_6_AFTERMATH_START) * 0.20F) + (strike.seed * 0.01F)));
+        float coreRadius = (4.8F + (3.0F * impactScale)) * (1.0F + (0.06F * pulse));
+        float scorchRadius = (10.0F + (7.5F * impactScale)) * (1.0F + (0.03F * pulse));
+
+        int coreAlpha = MathHelper.clamp(MathHelper.floor(110.0F * life * impactScale), 0, 220);
+        int scorchAlpha = MathHelper.clamp(MathHelper.floor(85.0F * life * impactScale), 0, 200);
+        int heatAlpha = MathHelper.clamp(MathHelper.floor(55.0F * life * impactScale), 0, 170);
+
+        float widthScale = MathHelper.clamp(0.80F + (0.30F * impactScale), 0.6F, 1.8F);
+        HammerRenderUtil.submitCircle(queue, matrices, RenderLayers.linesTranslucent(), AFTERMATH_CORE_CENTER, coreRadius, argb(coreAlpha, 255, 190, 120), 2.8F * widthScale, 72);
+        HammerRenderUtil.submitCircle(queue, matrices, RenderLayers.linesTranslucent(), AFTERMATH_SCORCH_CENTER, scorchRadius, argb(scorchAlpha, 210, 120, 75), 2.4F * widthScale, 92);
+        HammerRenderUtil.submitCircle(queue, matrices, RenderLayers.linesTranslucent(), AFTERMATH_SCORCH_CENTER, scorchRadius * (1.08F + (0.02F * pulse)), argb(MathHelper.floor(scorchAlpha * 0.60F), 165, 95, 65), 1.9F * widthScale, 96);
+
+        int spokes = impactScale >= 1.25F ? 10 : (impactScale <= 0.90F ? 6 : 8);
+        float tau = (float) (Math.PI * 2.0D);
+        for (int i = 0; i < spokes; i++) {
+            float angle = ((i / (float) spokes) * tau) + (strike.seed * 0.004F) + ((strikeTime - STAGE_6_AFTERMATH_START) * (0.05F + (i * 0.004F)));
+            float inner = coreRadius * (0.82F + ((i & 1) == 0 ? 0.12F : -0.06F));
+            float outer = inner + ((1.3F + (0.6F * impactScale)) * life);
+            Vec3d from = new Vec3d(Math.cos(angle) * inner, 0.06D, Math.sin(angle) * inner);
+            Vec3d to = new Vec3d(Math.cos(angle) * outer, 0.18D + (0.45D * life), Math.sin(angle) * outer);
+            HammerRenderUtil.submitLine(queue, matrices, RenderLayers.linesTranslucent(), from, to, argb(heatAlpha, 255, 140, 90), 1.3F * widthScale);
+        }
     }
 
     private static void submitCrossBeam(
@@ -848,12 +1175,16 @@ public final class HammerClientEffects {
         BlockPos targetPos = BlockPos.ORIGIN;
         Vec3d targetCenter = impactCenter(BlockPos.ORIGIN);
         int seed;
+        HammerConfig.ClientFxPreset fxPreset = HammerConfig.clientFxPreset();
         HammerStage stage = HammerStage.TARGETING;
         int stageStrikeTick;
         long stageStartWorldTime;
         long strikeStartWorldTime = Long.MIN_VALUE;
         long lastSeenWorldTime;
         long craterCompleteWorldTime = Long.MIN_VALUE;
+        int nextAftershockIndex;
+        long aftershockPulseEndWorldTime = Long.MIN_VALUE;
+        float aftershockPulseStrength;
 
         int lastProcessedStrikeTick = Integer.MIN_VALUE;
         int lastBreachSoundTick = Integer.MIN_VALUE;

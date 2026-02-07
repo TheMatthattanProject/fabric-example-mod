@@ -59,6 +59,8 @@ public abstract class HammerPostEffectPassMixin {
         float glitchStrength = HammerClientEffects.glitchStrength();
         float ringRadius = HammerClientEffects.ringRadiusNorm();
         float beamStrength = HammerClientEffects.beamStrength();
+        float collapseStrength = HammerClientEffects.collapseStrength();
+        float heatShimmerStrength = HammerClientEffects.heatShimmerStrength();
 
         MinecraftClient client = MinecraftClient.getInstance();
         float timeSeconds = 0.0F;
@@ -73,7 +75,9 @@ public abstract class HammerPostEffectPassMixin {
                 .putFloat(ringRadius)
                 .putFloat(ringStrength)
                 .putFloat(glitchStrength)
-                .putFloat(beamStrength);
+                .putFloat(beamStrength)
+                .putFloat(collapseStrength)
+                .putFloat(heatShimmerStrength);
         HAMMER_UNIFORMS.flip();
 
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();

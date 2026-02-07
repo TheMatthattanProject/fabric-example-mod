@@ -25,11 +25,12 @@ public final class HammerNetworking {
             BlockPos targetPos,
             int strikeEntityId,
             int seed,
+            HammerConfig.ClientFxPreset fxPreset,
             HammerStage stage,
             int strikeTick,
             long stageStartWorldTime
     ) {
-        S2CHammerPacket payload = new S2CHammerPacket(strikeEntityId, targetPos, seed, stage, strikeTick, stageStartWorldTime);
+        S2CHammerPacket payload = new S2CHammerPacket(strikeEntityId, targetPos, seed, fxPreset, stage, strikeTick, stageStartWorldTime);
         Vec3d center = new Vec3d(targetPos.getX() + 0.5D, targetPos.getY() + 0.5D, targetPos.getZ() + 0.5D);
         double radiusSq = STAGE_SYNC_RADIUS * STAGE_SYNC_RADIUS;
 
